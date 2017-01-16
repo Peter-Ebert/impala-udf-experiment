@@ -46,6 +46,25 @@ void CountUpdate(FunctionContext* context, const IntVal& input, BigIntVal* val);
 void CountMerge(FunctionContext* context, const BigIntVal& src, BigIntVal* dst);
 BigIntVal CountFinalize(FunctionContext* context, const BigIntVal& val);
 
+
+
+// This is an example of the AVG(double) aggregate function. This function needs to
+// maintain two pieces of state, the current sum and the count. We do this using
+// the StringVal intermediate type. When this UDA is registered, it would specify
+// 16 bytes (8 byte sum + 8 byte count) as the size for this buffer.
+//
+// Usage: > create aggregate function my_avg(double) returns string 
+//          location '/user/cloudera/libudasample.so' update_fn='AvgUpdate';
+//        > select cast(my_avg(col) as double) from tbl;
+void DistHashSetInit300k(FunctionContext* context, StringVal* val);
+void DistHashSetUpdate(FunctionContext* context, const StringVal& input, StringVal* val);
+void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal* dst);
+const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& val);
+StringVal DistHashSetFinalize(FunctionContext* context, const StringVal& val);
+
+
+
+
 // This is an example of the AVG(double) aggregate function. This function needs to
 // maintain two pieces of state, the current sum and the count. We do this using
 // the StringVal intermediate type. When this UDA is registered, it would specify

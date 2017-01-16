@@ -12,6 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <sstream>
+
+#define SSTR( x ) static_cast< std::ostringstream & >( \
+        ( std::ostringstream() << std::dec << x ) ).str()
+
+
 #include <iostream>
 #include <math.h>
 
@@ -21,6 +27,29 @@
 using namespace impala;
 using namespace impala_udf;
 using namespace std;
+
+// template <typename T>
+// StringVal ToStringVal1(FunctionContext* context, const T& val) {
+//   stringstream ss;
+//   ss << val;
+//   string str = ss.str();
+//   StringVal string_val(context, str.size());
+//   memcpy(string_val.ptr, str.c_str(), str.size());
+//   return string_val;
+// }
+
+// template <>
+// StringVal ToStringVal<DoubleVal>(FunctionContext* context, const DoubleVal& val) {
+//   if (val.is_null) return StringVal::null();
+//   return ToStringVal1(context, val.val);
+// }
+
+// // template <>
+// // StringVal ToStringVal<IntVal>(FunctionContext* context, const IntVal& val) {
+// //   if (val.is_null) return StringVal::null();
+// //   return ToStringVal(context, val.val);
+// // }
+
 
 bool TestCount() {
   // Use the UDA test harness to validate the COUNT UDA.
@@ -55,6 +84,43 @@ bool TestCount() {
     return false;
   }
 
+  return true;
+}
+
+
+bool TestDHS300k() {
+  UdaTestHarness<StringVal, StringVal, StringVal> test(
+      DistHashSetInit300k, DistHashSetUpdate, DistHashSetMerge, DistHashSetSerialize, DistHashSetFinalize);
+  test.SetIntermediateSize(32);
+
+  vector<StringVal> vals;
+
+  // Test empty input
+  if (!test.Execute<StringVal>(vals, StringVal::null())) {
+    cerr << "DHS empty: " << test.GetErrorMsg() << endl;
+    return false;
+  }
+
+  //Test Multiple values
+
+  vals.push_back("Hello");
+  vals.push_back("World");
+  vals.push_back("Hello");
+  
+  if (!test.Execute<StringVal>(vals, StringVal("2"))) {
+    cerr << "DHS: " << test.GetErrorMsg() << endl;
+    return false;
+  }
+
+  // Test values
+  // for (int i = 0; i < 1001; ++i) {
+  //   string s = SSTR(i);
+  //   vals.push_back( StringVal( s.c_str, s.length() ) );
+  // }
+  // if (!test.Execute<StringVal>(vals, StringVal("500"))) {
+  //   cerr << "DHS: " << test.GetErrorMsg() << endl;
+  //   return false;
+  // }
   return true;
 }
 
@@ -137,6 +203,9 @@ bool FuzzyCompareStrings(const StringVal& x, const StringVal& y) {
   return fabs(x_val - y_val) < 0.00001;
 }
 
+
+
+
 bool TestVariance() {
   // Setup the test UDAs.
   UdaTestHarness<StringVal, StringVal, DoubleVal> simple_variance(
@@ -214,6 +283,7 @@ int main(int argc, char** argv) {
   bool passed = true;
   passed &= TestCount();
   passed &= TestAvg();
+  passed &= TestDHS300k();
   passed &= TestStringConcat();
   passed &= TestVariance();
   cerr << (passed ? "Tests passed." : "Tests failed.") << endl;
