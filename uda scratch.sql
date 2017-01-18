@@ -1,5 +1,6 @@
+drop function hashsetcount(string);
 
-create aggregate function mycount(value as string) returns string
+create aggregate function hashsetcount(string) returns string
 location '/user/root/udfs/libudasample.so'
 init_fn='DistHashSetInit300k'
 update_fn='DistHashSetUpdate'
