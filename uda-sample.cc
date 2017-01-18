@@ -76,17 +76,22 @@ static uint64_t FnvHash(const void* data, int32_t bytes, uint64_t hash) {
 }
 
 //HashTable
-static const IntVal UPDATE_BUCKETS = 200000;
-static const IntVal FINALIZE_BUCKETS = 300000;
+// static const IntVal UPDATE_BUCKETS = 200000;
+// static const IntVal FINALIZE_BUCKETS = 300000;
 //Note: seperator cannot be present in source strings (will cause bad counts)
 static const StringVal STRING_SEPARATOR((uint8_t*)"\0", 1);
 
 struct DistHashSet {
   //DistHashSet(): buckets(NULL) {}
+  //DistHashSet(): buckets(NULL) {}
+  //add check to ensure data is well formed? length at start of string?
+  uint8_t magic_byte;
+  //todo: make sure you handle empty string as only member in delim list, if len = 1 return 1
   double sum;
   int count;
   int size;
   int bucket_count;
+  bool buckets_need_alloc;
   StringVal** buckets;
 };
 
@@ -102,10 +107,11 @@ void DistHashSetInit300k(FunctionContext* context, StringVal* strvaldhs) {
 
   //could also be moved to update to avoid spinup for finalize where not needed
   dhs->bucket_count = 30000;
-  
-  dhs->buckets = (StringVal **) context->Allocate(sizeof(StringVal *) * dhs->bucket_count);
-  memset(dhs->buckets, 0, sizeof(StringVal *) * dhs->bucket_count);
+  dhs->buckets_need_alloc = true;
 
+  // dhs->buckets_need_alloc = false;
+  // dhs->buckets = (StringVal **) context->Allocate(sizeof(StringVal *) * dhs->bucket_count);
+  // memset(dhs->buckets, 0, sizeof(StringVal *) * dhs->bucket_count);
 
   //StringVal* helloptr = (StringVal*) context->Allocate(sizeof(StringVal));
   //StringVal hello = StringVal("hello");
@@ -122,11 +128,18 @@ void DistHashSetInit300k(FunctionContext* context, StringVal* strvaldhs) {
 
 void DistHashSetUpdate(FunctionContext* context, const StringVal& str, StringVal* strvaldhs) {
   if (str.is_null) return;
-
   assert(!strvaldhs->is_null);
   assert(strvaldhs->len == sizeof(DistHashSet));
   DistHashSet* dhs = reinterpret_cast<DistHashSet*>(strvaldhs->ptr);
   
+  if (dhs->buckets_need_alloc) {
+    //allocate memory for buckets
+    dhs->buckets = (StringVal **) context->Allocate(sizeof(StringVal *) * dhs->bucket_count);
+    memset(dhs->buckets, 0, sizeof(StringVal *) * dhs->bucket_count);
+    dhs->buckets_need_alloc = false;
+  }
+  
+
   ++dhs->count;
 
   uint64_t mybucket = FnvHash(str.ptr, str.len, FNV64_SEED) % dhs->bucket_count;
@@ -137,9 +150,10 @@ void DistHashSetUpdate(FunctionContext* context, const StringVal& str, StringVal
     //copy str into bucket
     uint8_t* copy = context->Allocate(str.len);
     memcpy(copy, str.ptr, str.len);
+    dhs->buckets[mybucket]->is_null = false;
     dhs->buckets[mybucket]->len = str.len;
     dhs->buckets[mybucket]->ptr = copy;
-    dhs->buckets[mybucket]->is_null = false;
+    
     //memset(dhs->buckets[mybucket], 0, sizeof(StringVal));
     //dhs->buckets[mybucket]->ptr = NULL;
 
@@ -147,20 +161,6 @@ void DistHashSetUpdate(FunctionContext* context, const StringVal& str, StringVal
     //Collision, search bucket for duplicate
   }
 
-}
-
-//! when deserializing, check the order, if out of order (incremental) then \0 in the string
-// simply loop through the list and append where no duplicates, use larger table and loop through smaller for memmbership until greater hash value detected
-// finalize the large combined string by counting each value or /0
-void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal* dst) {
-  //if either string is null, return the other
-  if (src.is_null) return;
-  const DistHashSet* src_avg = reinterpret_cast<const DistHashSet*>(src.ptr);
-  DistHashSet* dst_avg = reinterpret_cast<DistHashSet*>(dst->ptr);
-  dst_avg->sum += src_avg->sum;
-  dst_avg->count += src_avg->count;
-
-  
 }
 
 // A serialize function is necesary to free the intermediate state allocation. We use the
@@ -176,21 +176,24 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
   DistHashSet* dhs = reinterpret_cast<DistHashSet*>(strvaldhs.ptr);
   
   ////Free memory
-  //check mem allocation
-  for (int i = 0; i < dhs->bucket_count; i++) {
-    if (dhs->buckets[i]) {
-      if (dhs->buckets[i]->ptr) {
-        //free bucket ptrs
-        context->Free((uint8_t*) dhs->buckets[i]->ptr);  
+  if(!dhs->buckets_need_alloc) {
+    //check mem allocation
+    for (int i = 0; i < dhs->bucket_count; i++) {
+      if (dhs->buckets[i]) {
+        if (dhs->buckets[i]->ptr) {
+          //free bucket ptrs
+          context->Free((uint8_t*) dhs->buckets[i]->ptr);  
+        }  
+        //free buckets contents
+        context->Free((uint8_t*) dhs->buckets[i]);
+        dhs->buckets[i] = NULL;
       }  
-      //free buckets contents
-      context->Free((uint8_t*) dhs->buckets[i]);
-      dhs->buckets[i] = NULL;
-    }  
-  }
+    }
 
-  //free buckets array
-  context->Free((uint8_t*) dhs->buckets);
+    //free buckets array
+    context->Free((uint8_t*) dhs->buckets);
+  }
+  
   //free struct
   context->Free(strvaldhs.ptr);
   /////Memory Freed
@@ -200,65 +203,138 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
 
 }
 
+//! when deserializing, check the order, if out of order (incremental) then \0 in the string
+// simply loop through the list and append where no duplicates, use larger table and loop through smaller for memmbership until greater hash value detected
+// finalize the large combined string by counting each value or /0
+void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal* dst) {
+  //if either string is null, return the other
+  if (src.is_null) return;
+  const DistHashSet* src_avg = reinterpret_cast<const DistHashSet*>(src.ptr);
+  DistHashSet* dst_avg = reinterpret_cast<DistHashSet*>(dst->ptr);
+  dst_avg->sum += src_avg->sum;
+  dst_avg->count += src_avg->count;
+  
+}
+
+
 StringVal DistHashSetFinalize(FunctionContext* context, const StringVal& strvaldhs) {
   assert(!strvaldhs.is_null);
-  assert(strvaldhs.len == sizeof(DistHashSet));
-  DistHashSet* dhs = reinterpret_cast<DistHashSet*>(strvaldhs.ptr);
   StringVal result;
-  //if string is null, return null
-  if (dhs->count == 0) {
-    result = StringVal::null();
+
+  // if(*strvaldhs.ptr) {
+  //   result = StringVal("not zero");
+  // } else {
+  //   result = StringVal("zero");
+  // }
+
+  //strvaldhs.len > 1 && 
+  if (*strvaldhs.ptr) {
+    //intermediate type is delimited string
+    result = StringVal("not zero");
   } else {
-    // Copies the result to memory owned by Impala
+    //intermediate type is DHS
+    assert(strvaldhs.len == sizeof(DistHashSet));
+    DistHashSet* dhs = reinterpret_cast<DistHashSet*>(strvaldhs.ptr);
     
-    // StringVal hello = StringVal("hello");
-    // dhs->buckets[0] = &hello;
-    if (dhs->buckets[16363])
-    {
-      if(dhs->buckets[16363]->ptr) {
-        //result = StringVal("string null");
-        result = ToStringVal(context, dhs->buckets[16363]->len);
-      } else {
-        result = ToStringVal(context, dhs->buckets[16363]->len);
-        //result = StringVal("string not null");
-        // result = StringVal(context, dhs->buckets[16363]->len);
-        // memcpy(result.ptr, dhs->buckets[16363]->ptr, dhs->buckets[16363]->len);
-        //result = StringVal(dhs->buckets[0]->ptr, dhs->buckets[0]->len);
-      }
+    if (dhs->count == 0) {
+      result = StringVal::null();
     } else {
-      result = StringVal("bucket null");
+      result = StringVal("was a DHS");
     }
 
-    // result = StringVal("skip!");
-    // StringVal str = StringVal("Hello");
-    // result = ToStringVal(context, FnvHash(str.ptr, str.len, FNV64_SEED) % dhs->bucket_count);
-
-    //result = ToStringVal(context, sizeof(StringVal("hello!")));
-    //result = *dhs->buckets[0];
-    //result = ToStringVal(context, *dhs->bucket_count);
-    //result = StringVal("placeholder");
+    ////Free memory
+    if(!dhs->buckets_need_alloc) {
+      //check mem allocation
+      for (int i = 0; i < dhs->bucket_count; i++) {
+        if (dhs->buckets[i]) {
+          if (dhs->buckets[i]->ptr) {
+            //free bucket ptrs
+            context->Free((uint8_t*) dhs->buckets[i]->ptr);  
+          }  
+          //free buckets contents
+          context->Free((uint8_t*) dhs->buckets[i]);
+          dhs->buckets[i] = NULL;
+        }  
+      }
+      //free buckets array
+      context->Free((uint8_t*) dhs->buckets);
+    }
+    context->Free(strvaldhs.ptr); 
+    /////Memory Freed
+    
   }
+
+
+  // assert(strvaldhs.len == sizeof(DistHashSet));
+  // DistHashSet* dhs = reinterpret_cast<DistHashSet*>(strvaldhs.ptr);
+  // StringVal result;
+  // //if string is null, return null
+  // if (dhs->count == 0) {
+  //   result = StringVal::null();
+  // } else {
+  //   // Copies the result to memory owned by Impala
+    
+  //   // StringVal hello = StringVal("hello");
+  //   // dhs->buckets[0] = &hello;
+  
+
+  //   // if (dhs->buckets[16363])
+  //   // {
+  //   //   if(!dhs->buckets[16363]->is_null) {
+  //   //     //result = StringVal("string null");
+  //   //     result = ToStringVal(context, dhs->buckets[16363]->len);
+  //   //   } else {
+  //   //     result = StringVal("string null");
+  //   //     // result = StringVal(context, dhs->buckets[16363]->len);
+  //   //     // memcpy(result.ptr, dhs->buckets[16363]->ptr, dhs->buckets[16363]->len);
+  //   //     //result = StringVal(dhs->buckets[0]->ptr, dhs->buckets[0]->len);
+  //   //   }
+  //   // } else {
+  //   //   //result = StringVal("bucket null");
+  //   //   result = ToStringVal(context, dhs->bucket_count);
+  //   // }
+
+
+
+  //   // result = StringVal("skip!");
+  //   // StringVal str = StringVal("Hello");
+  //   // result = ToStringVal(context, FnvHash(str.ptr, str.len, FNV64_SEED) % dhs->bucket_count);
+
+  //   //result = ToStringVal(context, sizeof(StringVal("hello!")));
+  //   //result = *dhs->buckets[0];
+  //   //result = ToStringVal(context, *dhs->bucket_count);
+  //   //result = StringVal("placeholder");
+
+
+  //   if (dhs->magic_byte) {
+  //     result = StringVal("not zero");
+  //   } else {
+  //     result = StringVal("zero");
+  //   }
+
+  // }
 
   ////Free memory
   //check mem allocation
-  for (int i = 0; i < dhs->bucket_count; i++) {
-    if (dhs->buckets[i]) {
-      if (dhs->buckets[i]->ptr) {
-        //free bucket ptrs
-        context->Free((uint8_t*) dhs->buckets[i]->ptr);  
-      }  
-      //free buckets contents
-      context->Free((uint8_t*) dhs->buckets[i]);
-      dhs->buckets[i] = NULL;
-    }  
-  }
+  // for (int i = 0; i < dhs->bucket_count; i++) {
+  //   if (dhs->buckets[i]) {
+  //     if (dhs->buckets[i]->ptr) {
+  //       //free bucket ptrs
+  //       context->Free((uint8_t*) dhs->buckets[i]->ptr);  
+  //     }  
+  //     //free buckets contents
+  //     context->Free((uint8_t*) dhs->buckets[i]);
+  //     dhs->buckets[i] = NULL;
+  //   }  
+  // }
 
-  //free buckets array
-  context->Free((uint8_t*) dhs->buckets);
-  //free struct
-  context->Free(strvaldhs.ptr);
-  /////Memory Freed
+  // //free buckets array
+  // context->Free((uint8_t*) dhs->buckets);
+  // // //free struct
+  // if (strvaldhs.ptr) {
 
+
+  
   return result;
 }
 
