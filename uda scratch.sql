@@ -6,3 +6,12 @@ init_fn='DistHashSetInit300k'
 update_fn='DistHashSetUpdate'
 merge_fn='DistHashSetMerge'
 finalize_fn='DistHashSetFinalize';
+
+
+init->update->serialize
+
+init->serialize->merge->finalize;
+
+Init() Update() Serialize() 
+
+Init() Merge() Finalize()
