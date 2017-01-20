@@ -218,7 +218,7 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
   if (*strvaldhs.ptr || strvaldhs.len==1) {
     //intermediate type is delimited string
     result = StringVal("delim list"); //shouldn't happen
-    
+    context->AddWarning("serialize strdelim shouldn't happen");
   } else {
 
 //     StringVal fixed("a\0");
@@ -244,6 +244,14 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
       for (int i = 0; i < dhs->bucket_count; i++) {
         if (dhs->buckets[i]) {
           if (dhs->buckets[i]->ptr) {
+            //create or append to result
+            if (result.is_null) {
+              uint8_t* copy = context->Allocate(dhs->buckets[i]->len);
+              memcpy(copy, dhs->buckets[i]->ptr, dhs->buckets[i]->len);
+              result = StringVal(copy, dhs->buckets[i]->len);
+              
+            }
+
             //free bucket ptrs
             context->Free((uint8_t*) dhs->buckets[i]->ptr);  
           }  
