@@ -154,9 +154,11 @@ void DistHashSetUpdate(FunctionContext* context, const StringVal& str, StringVal
     //First entry in bucket
     //allocate bucket memory
     dhs->buckets[mybucket] = (StringVal*) context->Allocate(sizeof(StringVal));
-    //copy str into bucket
-    uint8_t* copy = context->Allocate(str.len);
+    //copy str+delimiter into bucket
+    int new_len = STRING_SEPARATOR.len + str.len;
+    uint8_t* copy = context->Allocate(new_len);
     memcpy(copy, str.ptr, str.len);
+    memcpy(copy+str.len, STRING_SEPARATOR.ptr, STRING_SEPARATOR.len);
     dhs->buckets[mybucket]->is_null = false;
     dhs->buckets[mybucket]->len = str.len;
     dhs->buckets[mybucket]->ptr = copy;
@@ -168,39 +170,6 @@ void DistHashSetUpdate(FunctionContext* context, const StringVal& str, StringVal
     //Collision, search bucket for duplicate
   }
 
-}
-
-//todo: rename intermediate
-//! when deserializing, check the order, if out of order (incremental) then \0 in the string
-// simply loop through the list and append where no duplicates, use larger table and loop through smaller for memmbership until greater hash value detected
-// finalize the large combined string by counting each value or /0
-void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal* dst) {
-  //if either string is null, return the other
-  if (src.is_null) return;
-  
-  if (!*dst->ptr) {
-    //init was run for dhs, drop and change to delim str
-    context->Free(dst->ptr);
-
-    //!todo: loop through source merge join
-    StringVal result("a\0");
-    //context->AddWarning((char *) ToStringVal(context, result.len).ptr);
-    uint8_t* copy = context->Allocate(result.len);
-    memcpy(copy, result.ptr, result.len);
-    *dst = StringVal(copy, result.len);
-  }
-  //StringVal result("a\0");
-  //context->AddWarning("merged");
-  // if (*src.ptr || src.len==1) {
-  //   //intermediate type is delimited string
-  //   result = StringVal("delim list");
-  // } else {
-    // const DistHashSet* src_dhs = reinterpret_cast<const DistHashSet*>(src.ptr);
-    // DistHashSet* dst_strdelim = reinterpret_cast<DistHashSet*>(dst->ptr);
-    
-
-  // }
-  
 }
 
 // A serialize function is necesary to free the intermediate state allocation. We use the
@@ -245,7 +214,8 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
         if (dhs->buckets[i]) {
           if (dhs->buckets[i]->ptr) {
             //create or append to result
-            if (result.is_null) {
+            if (result.len == 0) {
+              context->AddWarning("created");
               uint8_t* copy = context->Allocate(dhs->buckets[i]->len);
               memcpy(copy, dhs->buckets[i]->ptr, dhs->buckets[i]->len);
               result = StringVal(copy, dhs->buckets[i]->len);
@@ -274,6 +244,43 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
 }
 
 
+//todo: rename intermediate
+//! when deserializing, check the order, if out of order (incremental) then \0 in the string
+// simply loop through the list and append where no duplicates, use larger table and loop through smaller for memmbership until greater hash value detected
+// finalize the large combined string by counting each value or /0
+void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal* dst) {
+  //if either string is null, return the other
+  if (src.is_null) return;
+  
+
+  if (!*dst->ptr) {
+    //init was run for dhs, drop and change to delim str
+    context->Free(dst->ptr);
+
+    //!todo: loop through source and dst, merge join
+
+    StringVal result("ab");
+    //context->AddWarning((char *) ToStringVal(context, result.len).ptr);
+    int new_len = result.len + STRING_SEPARATOR.len;
+    uint8_t* copy = context->Allocate(new_len);
+    memcpy(copy, result.ptr, result.len);
+    memcpy(copy+result.len, STRING_SEPARATOR.ptr, STRING_SEPARATOR.len);
+    *dst = StringVal(copy, new_len);
+  }
+  //StringVal result("a\0");
+  //context->AddWarning("merged");
+  // if (*src.ptr || src.len==1) {
+  //   //intermediate type is delimited string
+  //   result = StringVal("delim list");
+  // } else {
+    // const DistHashSet* src_dhs = reinterpret_cast<const DistHashSet*>(src.ptr);
+    // DistHashSet* dst_strdelim = reinterpret_cast<DistHashSet*>(dst->ptr);
+    
+
+  // }
+  
+}
+
 
 StringVal DistHashSetFinalize(FunctionContext* context, const StringVal& strvaldhs) {
   assert(!strvaldhs.is_null);
@@ -294,6 +301,8 @@ StringVal DistHashSetFinalize(FunctionContext* context, const StringVal& strvald
     result = StringVal("delim list");
     if (strvaldhs.len == 1) {
       result = StringVal("1");
+    } else if (strvaldhs.len == 3) {
+    result = StringVal("3");
     } else {
       result = StringVal("other");
     }
