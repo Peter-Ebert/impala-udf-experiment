@@ -8,10 +8,12 @@ merge_fn='DistHashSetMerge'
 finalize_fn='DistHashSetFinalize';
 
 
-init->update->serialize
+-- init->update->serialize
+-- init->serialize->merge->finalize;
 
-init->serialize->merge->finalize;
+Normal
+	Init() Update() Serialize() 
+	Init() Merge() Finalize()
 
-Init() Update() Serialize() 
-
-Init() Merge() Finalize()
+Local
+	Init() Update() Finalize()

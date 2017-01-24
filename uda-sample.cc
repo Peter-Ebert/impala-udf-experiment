@@ -167,7 +167,7 @@ void DistHashSetUpdate(FunctionContext* context, const StringVal& str, StringVal
     //dhs->buckets[mybucket]->ptr = NULL;
 
   } else {
-    //Collision, search bucket for duplicate
+    //Collision, search bucket for duplicate, add if no dup
   }
 
 }
@@ -179,14 +179,18 @@ void DistHashSetUpdate(FunctionContext* context, const StringVal& str, StringVal
 // AvgInit().
 const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& strvaldhs) {
   assert(!strvaldhs.is_null);
-  StringVal result;
+  StringVal temp;
+  //result.is_null = true;
+  // if (!result.ptr) {
+  //   context->AddWarning("ptr null");
+  // }
 
 //  StringVal result("a\0");
   
   
   if (*strvaldhs.ptr || strvaldhs.len==1) {
     //intermediate type is delimited string
-    result = StringVal("delim list"); //shouldn't happen
+    //result = StringVal("delim list"); //shouldn't happen
     context->AddWarning("serialize strdelim shouldn't happen");
   } else {
 
@@ -214,14 +218,23 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
         if (dhs->buckets[i]) {
           if (dhs->buckets[i]->ptr) {
             //create or append to result
-            if (result.len == 0) {
+            if (temp.len == 0) {
               context->AddWarning("created");
-              uint8_t* copy = context->Allocate(dhs->buckets[i]->len);
-              memcpy(copy, dhs->buckets[i]->ptr, dhs->buckets[i]->len);
-              result = StringVal(copy, dhs->buckets[i]->len);
               
+              context->Free(temp.ptr);
+              temp.ptr = context->Allocate(dhs->buckets[i]->len);
+              memcpy(temp.ptr, dhs->buckets[i]->ptr, dhs->buckets[i]->len);
+              temp.len = dhs->buckets[i]->len;
+              temp.is_null = false;
+              
+////              memcpy(result.ptr, dhs->buckets[i]->ptr, dhs->buckets[i]->len)
+            
+              //result = StringVal("1234");
+              
+              // if(result.len == 0) {
+              //   context->AddWarning("res is still 0");
+              // }
             }
-
             //free bucket ptrs
             context->Free((uint8_t*) dhs->buckets[i]->ptr);  
           }  
@@ -240,6 +253,10 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
     /////Memory Freed
   }
 
+  //finalize result
+  StringVal result(context, temp.len);
+  memcpy(result.ptr, temp.ptr, temp.len);
+  context->Free(temp.ptr);
   return result;
 }
 
@@ -251,13 +268,12 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
 void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal* dst) {
   //if either string is null, return the other
   if (src.is_null) return;
-  
+  if (src.len == 0) return;
 
   if (!*dst->ptr) {
     //init was run for dhs, drop and change to delim str
     context->Free(dst->ptr);
 
-    //!todo: loop through source and dst, merge join
 
     StringVal result("ab");
     //context->AddWarning((char *) ToStringVal(context, result.len).ptr);
@@ -266,7 +282,16 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
     memcpy(copy, result.ptr, result.len);
     memcpy(copy+result.len, STRING_SEPARATOR.ptr, STRING_SEPARATOR.len);
     *dst = StringVal(copy, new_len);
+  } else {
+    //!todo: loop through source and dst, merge join
+    //currently just concat
+    context->AddWarning("merg concat");
+    int new_len = dst->len + src.len;
+    dst->ptr = context->Reallocate(dst->ptr, new_len);
+    memcpy(dst->ptr + dst->len, src.ptr, src.len);
+    dst->len = new_len;   
   }
+
   //StringVal result("a\0");
   //context->AddWarning("merged");
   // if (*src.ptr || src.len==1) {
