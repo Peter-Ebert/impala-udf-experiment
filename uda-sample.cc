@@ -15,6 +15,7 @@
 #include "uda-sample.h"
 #include <assert.h>
 #include <sstream>
+#include <algorithm>
 
 using namespace impala_udf;
 using namespace std;
@@ -85,7 +86,9 @@ static uint64_t FnvHash(const void* data, int32_t bytes, uint64_t hash) {
 // static const IntVal FINALIZE_BUCKETS = 300000;
 //Note: seperator cannot be present in source strings (will cause bad counts)
 static const StringVal STRING_SEPARATOR((uint8_t*)"\0", 1);
-static const StringVal MAGIC_BYTE((uint8_t*)"\0", 1);
+static const StringVal MAGIC_BYTE_DHS((uint8_t*)"H", 1);
+static const StringVal MAGIC_BYTE_DELIMSTR((uint8_t*)"D", 1);
+//static const StringVal MAGIC_BYTE_DELIMSTR((uint8_t*)255, 1);
 
 struct DistHashSet {
   //DistHashSet(): buckets(NULL) {}
@@ -110,6 +113,9 @@ void DistHashSetInit300k(FunctionContext* context, StringVal* strvaldhs) {
   memset(strvaldhs->ptr, 0, strvaldhs->len);
 
   DistHashSet* dhs = reinterpret_cast<DistHashSet*>(strvaldhs->ptr);
+  //set magic byte
+  dhs->magic_byte = *MAGIC_BYTE_DHS.ptr;
+  //*(uint8_t *)"s";//
 
   //could also be moved to update to avoid spinup for finalize where not needed
   dhs->bucket_count = 30000;
@@ -160,14 +166,17 @@ void DistHashSetUpdate(FunctionContext* context, const StringVal& str, StringVal
     memcpy(copy, str.ptr, str.len);
     memcpy(copy+str.len, STRING_SEPARATOR.ptr, STRING_SEPARATOR.len);
     dhs->buckets[mybucket]->is_null = false;
-    dhs->buckets[mybucket]->len = str.len;
+    dhs->buckets[mybucket]->len = new_len;
     dhs->buckets[mybucket]->ptr = copy;
+
+    //context->AddWarning((char *) ToStringVal(context, str.len).ptr);
     
     //memset(dhs->buckets[mybucket], 0, sizeof(StringVal));
     //dhs->buckets[mybucket]->ptr = NULL;
 
   } else {
     //Collision, search bucket for duplicate, add if no dup
+    //!todo: no collision handling
   }
 
 }
@@ -178,8 +187,14 @@ void DistHashSetUpdate(FunctionContext* context, const StringVal& str, StringVal
 // not necessarily persisted across UDA function calls, which is why we don't use it in
 // AvgInit().
 const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& strvaldhs) {
-  assert(!strvaldhs.is_null);
+  //ensure this is a disthashset, use magic byte?
+  assert(strvaldhs.len == sizeof(DistHashSet));
   StringVal temp;
+  temp.ptr = context->Allocate(MAGIC_BYTE_DELIMSTR.len);
+  memcpy(temp.ptr, MAGIC_BYTE_DELIMSTR.ptr, MAGIC_BYTE_DELIMSTR.len);
+  temp.len = MAGIC_BYTE_DELIMSTR.len;
+  temp.is_null = false;
+
   //result.is_null = true;
   // if (!result.ptr) {
   //   context->AddWarning("ptr null");
@@ -188,7 +203,7 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
 //  StringVal result("a\0");
   
   
-  if (*strvaldhs.ptr || strvaldhs.len==1) {
+  if (strvaldhs.ptr[0] == MAGIC_BYTE_DELIMSTR.ptr[0]) {
     //intermediate type is delimited string
     //result = StringVal("delim list"); //shouldn't happen
     context->AddWarning("serialize strdelim shouldn't happen");
@@ -209,7 +224,7 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
     
     DistHashSet* dhs = reinterpret_cast<DistHashSet*>(strvaldhs.ptr);
     
-    //!todo: convert to hash ordered delimited string
+    //!done: convert to hash ordered delimited string 
 
     //build serialized string and free memory as we go
     if(!dhs->buckets_need_alloc) {
@@ -217,24 +232,39 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
       for (int i = 0; i < dhs->bucket_count; i++) {
         if (dhs->buckets[i]) {
           if (dhs->buckets[i]->ptr) {
-            //create or append to result
-            if (temp.len == 0) {
-              context->AddWarning("created");
+            //always append to list, seperator already added.
+            int new_len = temp.len + dhs->buckets[i]->len;
+            temp.ptr = context->Reallocate(temp.ptr, new_len);
+            memcpy(temp.ptr + temp.len, dhs->buckets[i]->ptr, dhs->buckets[i]->len);
+            temp.len = new_len;
+
+            // if (temp.len == 0) {
+            //   context->AddWarning("created");
               
-              context->Free(temp.ptr);
-              temp.ptr = context->Allocate(dhs->buckets[i]->len);
-              memcpy(temp.ptr, dhs->buckets[i]->ptr, dhs->buckets[i]->len);
-              temp.len = dhs->buckets[i]->len;
-              temp.is_null = false;
+            //   context->Free(temp.ptr);
+            //   temp.ptr = context->Allocate(dhs->buckets[i]->len);
+            //   memcpy(temp.ptr, dhs->buckets[i]->ptr, dhs->buckets[i]->len);
+            //   temp.len = dhs->buckets[i]->len;
+            //   temp.is_null = false;
               
-////              memcpy(result.ptr, dhs->buckets[i]->ptr, dhs->buckets[i]->len)
+            // }
+
+            //append to result
             
-              //result = StringVal("1234");
-              
-              // if(result.len == 0) {
-              //   context->AddWarning("res is still 0");
-              // }
-            }
+            //context->AddWarning("always append");
+            // int new_len = temp.len + dhs->buckets[i]->len;
+            // temp.ptr = context->Reallocate(temp.ptr, new_len);
+            // memcpy(temp.ptr + temp.len, dhs->buckets[i]->ptr, dhs->buckets[i]->len);
+            // temp.len = new_len;
+            
+////              memcpy(result.ptr, dhs->buckets[i]->ptr, dhs->buckets[i]->len)
+          
+            //result = StringVal("1234");
+            
+            // if(result.len == 0) {
+            //   context->AddWarning("res is still 0");
+            // }
+            
             //free bucket ptrs
             context->Free((uint8_t*) dhs->buckets[i]->ptr);  
           }  
@@ -266,30 +296,66 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
 // simply loop through the list and append where no duplicates, use larger table and loop through smaller for memmbership until greater hash value detected
 // finalize the large combined string by counting each value or /0
 void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal* dst) {
-  //if either string is null, return the other
-  if (src.is_null) return;
-  if (src.len == 0) return;
+  //if string contains only magic byte there are no values in the list
+  if (src.len <= 1) return;
 
-  if (!*dst->ptr) {
-    //init was run for dhs, drop and change to delim str
+  if (dst->ptr[0] == MAGIC_BYTE_DHS.ptr[0]) {
+    //init was run for dhs, drop and set equal to current string to be merged
+    //should happen once per merge
     context->Free(dst->ptr);
 
+    uint8_t* copy = context->Allocate(src.len);
+    memcpy(copy, src.ptr, src.len);
+    *dst = StringVal(copy, src.len);
 
-    StringVal result("ab");
-    //context->AddWarning((char *) ToStringVal(context, result.len).ptr);
-    int new_len = result.len + STRING_SEPARATOR.len;
-    uint8_t* copy = context->Allocate(new_len);
-    memcpy(copy, result.ptr, result.len);
-    memcpy(copy+result.len, STRING_SEPARATOR.ptr, STRING_SEPARATOR.len);
-    *dst = StringVal(copy, new_len);
-  } else {
+    //context->AddWarning((char *) src.ptr);
+
+    //*dst = StringVal(src.ptr, src.len);
+
+    //perform copy 
+// int new_len = temp.len + dhs->buckets[i]->len;
+//             temp.ptr = context->Reallocate(temp.ptr, new_len);
+//             memcpy(temp.ptr + temp.len, dhs->buckets[i]->ptr, dhs->buckets[i]->len);
+//             temp.len = new_len;
+
+    // StringVal result("Dab");
+    // //context->AddWarning((char *) ToStringVal(context, result.len).ptr);
+    // int new_len = result.len + STRING_SEPARATOR.len;
+    // uint8_t* copy = context->Allocate(new_len);
+    // memcpy(copy, result.ptr, result.len);
+    // memcpy(copy+result.len, STRING_SEPARATOR.ptr, STRING_SEPARATOR.len);
+    // *dst = StringVal(copy, new_len);
+  } else if (dst->ptr[0] == MAGIC_BYTE_DELIMSTR.ptr[0]){
+    //merge delimited strings
+
     //!todo: loop through source and dst, merge join
+    //!todo: skip magic byte
     //currently just concat
+    const StringVal* longer;
+    const StringVal* shorter;
+
+    //to avoid having to grow the buffer, set it to the max possible size (shrink at end)
+    uint8_t* merge_buffer = context->Allocate(src.len + dst->len);
+
+    if (src.len < dst->len){
+      context->AddWarning("longer");
+      longer = &src;
+      shorter = dst;
+    } else {
+      context->AddWarning("shorter");
+      longer = dst;
+      shorter  = &src;
+    }
+
+    //loop through longer comparing to shorter
+
     context->AddWarning("merg concat");
     int new_len = dst->len + src.len;
     dst->ptr = context->Reallocate(dst->ptr, new_len);
     memcpy(dst->ptr + dst->len, src.ptr, src.len);
     dst->len = new_len;   
+  } else {
+    context->AddWarning("undefined");
   }
 
   //StringVal result("a\0");
@@ -317,24 +383,39 @@ StringVal DistHashSetFinalize(FunctionContext* context, const StringVal& strvald
   // } else {
   //   result = StringVal("zero");
   // }
-
   
   //strvaldhs.len > 1 && 
-  if (*strvaldhs.ptr || strvaldhs.len==1) {
+  if (strvaldhs.ptr[0] == MAGIC_BYTE_DELIMSTR.ptr[0]) {
     //intermediate type is delimited string
-    //context->AddWarning("final not dhs");
-    result = StringVal("delim list");
-    if (strvaldhs.len == 1) {
-      result = StringVal("1");
-    } else if (strvaldhs.len == 3) {
-    result = StringVal("3");
-    } else {
-      result = StringVal("other");
-    }
+    context->AddWarning("final delimstr"); //debug
 
-    context->Free(strvaldhs.ptr); 
-  } else {
+    //debug
+    context->AddWarning((char *) strvaldhs.ptr);
+
+    //count number of seperators
+    int n = count(strvaldhs.ptr, strvaldhs.ptr + strvaldhs.len, (int) *STRING_SEPARATOR.ptr);
+    result = ToStringVal(context, n);
+    // for(int i = 0; i < strvaldhs.len; i++) {
+
+    // }
+    
+    //context->AddWarning("final not dhs");
+    // result = StringVal("delim list");
+    // if (strvaldhs.len == 1) {
+    //   result = StringVal("1");
+    // } else if (strvaldhs.len == 3) {
+    // result = StringVal("3");
+    // } else {
+    //   //result = strvaldhs;
+    //   result = ToStringVal(context, strvaldhs.len);
+    //   //result = StringVal("other");
+    // }
+
+    //context->Free(strvaldhs.ptr); 
+  } else if (strvaldhs.ptr[0] == MAGIC_BYTE_DHS.ptr[0]) {
+    context->AddWarning("final dhs");
     //intermediate type is DHS
+    //context->AddWarning("final dhs");
     assert(strvaldhs.len == sizeof(DistHashSet));
     DistHashSet* dhs = reinterpret_cast<DistHashSet*>(strvaldhs.ptr);
     
@@ -367,11 +448,16 @@ StringVal DistHashSetFinalize(FunctionContext* context, const StringVal& strvald
       result = StringVal::null();
       // result = ToStringVal(context, strvaldhs.len);
     }
-    context->Free(strvaldhs.ptr); 
+    //context->Free(strvaldhs.ptr); 
     /////Memory Freed
     
+  } else {
+    context->AddWarning("neither");
+    result = StringVal::null();
   }
 
+  //both paths lead to freeing ptr
+  context->Free(strvaldhs.ptr); 
 
   // assert(strvaldhs.len == sizeof(DistHashSet));
   // DistHashSet* dhs = reinterpret_cast<DistHashSet*>(strvaldhs.ptr);

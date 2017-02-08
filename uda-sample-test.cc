@@ -12,11 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <sstream>
-
-#define SSTR( x ) static_cast< std::ostringstream & >( \
-        ( std::ostringstream() << std::dec << x ) ).str()
-
 
 #include <iostream>
 #include <math.h>
@@ -70,6 +65,8 @@ bool TestCount() {
     cerr << "Count without nulls: " << test.GetErrorMsg() << endl;
     return false;
   }
+
+  //ADD TEST FOR JUST ""
 
   // Run the UDA with some nulls
   vector<IntVal> some_nulls;
