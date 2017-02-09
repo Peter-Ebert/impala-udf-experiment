@@ -98,6 +98,13 @@ bool TestDHS300k() {
     return false;
   }
 
+  //Test just empty string
+  //vals.push_back("");
+  // if (!test.Execute<StringVal>(vals, StringVal("1"))) {
+  //   cerr << "DHS: " << test.GetErrorMsg() << endl;
+  //   return false;
+  // }
+
   //Test Multiple values
 
   vals.push_back("Hello");

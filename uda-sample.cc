@@ -86,8 +86,9 @@ static uint64_t FnvHash(const void* data, int32_t bytes, uint64_t hash) {
 // static const IntVal FINALIZE_BUCKETS = 300000;
 //Note: seperator cannot be present in source strings (will cause bad counts)
 static const StringVal STRING_SEPARATOR((uint8_t*)"\0", 1);
-static const StringVal MAGIC_BYTE_DHS((uint8_t*)"H", 1);
-static const StringVal MAGIC_BYTE_DELIMSTR((uint8_t*)"D", 1);
+static const uint8_t MAGIC_BYTE_DHS = 'H';
+static const uint8_t MAGIC_BYTE_DELIMSTR = 'D';
+static const int BUCKET_COUNT = 30000;
 //static const StringVal MAGIC_BYTE_DELIMSTR((uint8_t*)255, 1);
 
 struct DistHashSet {
@@ -114,11 +115,11 @@ void DistHashSetInit300k(FunctionContext* context, StringVal* strvaldhs) {
 
   DistHashSet* dhs = reinterpret_cast<DistHashSet*>(strvaldhs->ptr);
   //set magic byte
-  dhs->magic_byte = *MAGIC_BYTE_DHS.ptr;
+  dhs->magic_byte = MAGIC_BYTE_DHS;
   //*(uint8_t *)"s";//
 
   //could also be moved to update to avoid spinup for finalize where not needed
-  dhs->bucket_count = 30000;
+  dhs->bucket_count = BUCKET_COUNT;
   dhs->buckets_need_alloc = true;
 
   // dhs->buckets_need_alloc = false;
@@ -190,9 +191,9 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
   //ensure this is a disthashset, use magic byte?
   assert(strvaldhs.len == sizeof(DistHashSet));
   StringVal temp;
-  temp.ptr = context->Allocate(MAGIC_BYTE_DELIMSTR.len);
-  memcpy(temp.ptr, MAGIC_BYTE_DELIMSTR.ptr, MAGIC_BYTE_DELIMSTR.len);
-  temp.len = MAGIC_BYTE_DELIMSTR.len;
+  temp.ptr = context->Allocate(sizeof(MAGIC_BYTE_DELIMSTR));
+  memcpy(temp.ptr, &MAGIC_BYTE_DELIMSTR, sizeof(MAGIC_BYTE_DELIMSTR));
+  temp.len = sizeof(MAGIC_BYTE_DELIMSTR);
   temp.is_null = false;
 
   //result.is_null = true;
@@ -203,7 +204,7 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
 //  StringVal result("a\0");
   
   
-  if (strvaldhs.ptr[0] == MAGIC_BYTE_DELIMSTR.ptr[0]) {
+  if (strvaldhs.ptr[0] == MAGIC_BYTE_DELIMSTR) {
     //intermediate type is delimited string
     //result = StringVal("delim list"); //shouldn't happen
     context->AddWarning("serialize strdelim shouldn't happen");
@@ -299,7 +300,7 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
   //if string contains only magic byte there are no values in the list
   if (src.len <= 1) return;
 
-  if (dst->ptr[0] == MAGIC_BYTE_DHS.ptr[0]) {
+  if (dst->ptr[0] == MAGIC_BYTE_DHS) {
     //init was run for dhs, drop and set equal to current string to be merged
     //should happen once per merge
     context->Free(dst->ptr);
@@ -325,26 +326,65 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
     // memcpy(copy, result.ptr, result.len);
     // memcpy(copy+result.len, STRING_SEPARATOR.ptr, STRING_SEPARATOR.len);
     // *dst = StringVal(copy, new_len);
-  } else if (dst->ptr[0] == MAGIC_BYTE_DELIMSTR.ptr[0]){
+  } else if (dst->ptr[0] == MAGIC_BYTE_DELIMSTR) {
     //merge delimited strings
 
     //!todo: loop through source and dst, merge join
     //!todo: skip magic byte
     //currently just concat
-    const StringVal* longer;
-    const StringVal* shorter;
 
     //to avoid having to grow the buffer, set it to the max possible size (shrink at end)
-    uint8_t* merge_buffer = context->Allocate(src.len + dst->len);
+    uint8_t* merge_buffer = context->Allocate(src.len + dst->len - (sizeof(MAGIC_BYTE_DELIMSTR)*2));
 
-    if (src.len < dst->len){
-      context->AddWarning("longer");
-      longer = &src;
-      shorter = dst;
-    } else {
-      context->AddWarning("shorter");
-      longer = dst;
-      shorter  = &src;
+    uint8_t* src_end = src.ptr + src.len;
+    uint8_t* dst_end = dst->ptr + dst->len;
+    
+    uint8_t* src_loc = src.ptr + sizeof(MAGIC_BYTE_DELIMSTR);
+    uint8_t* src_delim_loc = NULL;
+    uint8_t* src_new_bucket_loc = NULL;
+
+    uint8_t* dst_loc = dst->ptr + sizeof(MAGIC_BYTE_DELIMSTR);
+    uint8_t* dst_delim_loc = NULL;
+
+
+    //BUCKET_COUNT
+    uint64_t current_bucket = 0;
+
+    //DST assumed to be bigger, loop through it first, compare to smaller
+    while (dst_loc < dst_end) {
+      //uint64_t mybucket = FnvHash(str.ptr, str.len, FNV64_SEED) % dhs->bucket_count;
+      dst_delim_loc = (uint8_t*)memchr(dst_loc, *STRING_SEPARATOR.ptr, dst_loc - dst_end);
+
+      //context->AddWarning((char *) ToStringVal(context, dst_delim_loc - dst_loc).ptr);
+      if ( dst_delim_loc ) {
+        current_bucket = FnvHash(dst_loc, dst_delim_loc - dst_loc, FNV64_SEED) % BUCKET_COUNT;
+
+        //sub-loop through source until higher bucket found, compare each value in same bucket
+        bool match_found = false;
+        while (src_loc < src_end) {
+          src_delim_loc = (uint8_t*)memchr(src_loc, *STRING_SEPARATOR.ptr, src_loc - src_end);
+
+          if ( (dst_delim_loc - dst_loc) == (src_loc - src_end) ) {
+            //strings are same size
+            if (!memcmp(dst_loc, src_loc, src_loc - src_end)) {
+              //strings identical, set do not add flag, exit loop
+              match_found = true;
+              src_loc = src_end;
+            }
+          }
+          src_loc = src_delim_loc + STRING_SEPARATOR.len;
+        }
+
+
+        dst_loc = dst_delim_loc + STRING_SEPARATOR.len;
+      }
+      else {
+        //no separator found, must be end of string already, error
+        //!todo: remove
+        dst_loc = dst_end;
+        context->AddWarning("shouldn't not find 0");
+      }
+
     }
 
     //loop through longer comparing to shorter
@@ -353,7 +393,10 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
     int new_len = dst->len + src.len;
     dst->ptr = context->Reallocate(dst->ptr, new_len);
     memcpy(dst->ptr + dst->len, src.ptr, src.len);
-    dst->len = new_len;   
+    dst->len = new_len; 
+
+    context->Free(merge_buffer);
+
   } else {
     context->AddWarning("undefined");
   }
@@ -385,7 +428,7 @@ StringVal DistHashSetFinalize(FunctionContext* context, const StringVal& strvald
   // }
   
   //strvaldhs.len > 1 && 
-  if (strvaldhs.ptr[0] == MAGIC_BYTE_DELIMSTR.ptr[0]) {
+  if (strvaldhs.ptr[0] == MAGIC_BYTE_DELIMSTR) {
     //intermediate type is delimited string
     context->AddWarning("final delimstr"); //debug
 
@@ -412,7 +455,7 @@ StringVal DistHashSetFinalize(FunctionContext* context, const StringVal& strvald
     // }
 
     //context->Free(strvaldhs.ptr); 
-  } else if (strvaldhs.ptr[0] == MAGIC_BYTE_DHS.ptr[0]) {
+  } else if (strvaldhs.ptr[0] == MAGIC_BYTE_DHS) {
     context->AddWarning("final dhs");
     //intermediate type is DHS
     //context->AddWarning("final dhs");
