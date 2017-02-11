@@ -15,5 +15,8 @@ Normal
 	Init() Update() Serialize() 
 	Init() Merge() Finalize()
 
-Local
+Num_nodes=1
 	Init() Update() Finalize()
+
+
+//todo: could sort on insert to bucket and merge sort in our merge sort

@@ -85,9 +85,10 @@ static uint64_t FnvHash(const void* data, int32_t bytes, uint64_t hash) {
 // static const IntVal UPDATE_BUCKETS = 200000;
 // static const IntVal FINALIZE_BUCKETS = 300000;
 //Note: seperator cannot be present in source strings (will cause bad counts)
-static const StringVal STRING_SEPARATOR((uint8_t*)"\0", 1);
+static const StringVal STRING_SEPARATOR((uint8_t*)"Z", 1); //"\0"
 static const uint8_t MAGIC_BYTE_DHS = 'H';
 static const uint8_t MAGIC_BYTE_DELIMSTR = 'D';
+static const uint8_t MAGIC_BYTE_SIZE = 1;
 static const int BUCKET_COUNT = 30000;
 //static const StringVal MAGIC_BYTE_DELIMSTR((uint8_t*)255, 1);
 
@@ -297,121 +298,179 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
 // simply loop through the list and append where no duplicates, use larger table and loop through smaller for memmbership until greater hash value detected
 // finalize the large combined string by counting each value or /0
 void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal* dst) {
-  //if string contains only magic byte there are no values in the list
+  //if string contains only magic byte there are no values in the list, can safely return
   if (src.len <= 1) return;
+
+
 
   if (dst->ptr[0] == MAGIC_BYTE_DHS) {
     //init was run for dhs, drop and set equal to current string to be merged
     //should happen once per merge
     context->Free(dst->ptr);
-
     uint8_t* copy = context->Allocate(src.len);
     memcpy(copy, src.ptr, src.len);
     *dst = StringVal(copy, src.len);
 
-    //context->AddWarning((char *) src.ptr);
-
-    //*dst = StringVal(src.ptr, src.len);
-
-    //perform copy 
-// int new_len = temp.len + dhs->buckets[i]->len;
-//             temp.ptr = context->Reallocate(temp.ptr, new_len);
-//             memcpy(temp.ptr + temp.len, dhs->buckets[i]->ptr, dhs->buckets[i]->len);
-//             temp.len = new_len;
-
-    // StringVal result("Dab");
-    // //context->AddWarning((char *) ToStringVal(context, result.len).ptr);
-    // int new_len = result.len + STRING_SEPARATOR.len;
-    // uint8_t* copy = context->Allocate(new_len);
-    // memcpy(copy, result.ptr, result.len);
-    // memcpy(copy+result.len, STRING_SEPARATOR.ptr, STRING_SEPARATOR.len);
-    // *dst = StringVal(copy, new_len);
   } else if (dst->ptr[0] == MAGIC_BYTE_DELIMSTR) {
+    //note:technically if size changed [0] would error
     //merge delimited strings
+    //context->AddWarning("merge concat");
 
     //!todo: loop through source and dst, merge join
-    //!todo: skip magic byte
-    //currently just concat
 
     //to avoid having to grow the buffer, set it to the max possible size (shrink at end)
-    uint8_t* merge_buffer = context->Allocate(src.len + dst->len - (sizeof(MAGIC_BYTE_DELIMSTR)*2));
+    uint8_t* merge_buffer = context->Allocate(src.len + (dst->len - MAGIC_BYTE_SIZE));
+    memcpy(merge_buffer, &MAGIC_BYTE_DELIMSTR, MAGIC_BYTE_SIZE);
+    uint8_t* buffer_loc = merge_buffer + MAGIC_BYTE_SIZE;
 
+    //initial values
+    //will always be at least one item in delim list
     uint8_t* src_end = src.ptr + src.len;
     uint8_t* dst_end = dst->ptr + dst->len;
-    
-    uint8_t* src_loc = src.ptr + sizeof(MAGIC_BYTE_DELIMSTR);
-    uint8_t* src_delim_loc = NULL;
-    uint8_t* src_new_bucket_loc = NULL;
 
-    uint8_t* dst_loc = dst->ptr + sizeof(MAGIC_BYTE_DELIMSTR);
-    uint8_t* dst_delim_loc = NULL;
+    uint8_t* src_cur_loc = src.ptr + sizeof(MAGIC_BYTE_DELIMSTR);
+    uint8_t* dst_cur_loc = dst->ptr + sizeof(MAGIC_BYTE_DELIMSTR);
+
+    uint8_t* src_chunk_start = src_cur_loc;
+    uint8_t* dst_chunk_start = dst_cur_loc;//needed?
+
+    uint8_t* src_next_loc = (uint8_t*)memchr(src_cur_loc, *STRING_SEPARATOR.ptr, src_cur_loc - src_end) + STRING_SEPARATOR.len;
+    uint8_t* dst_next_loc = (uint8_t*)memchr(dst_cur_loc, *STRING_SEPARATOR.ptr, dst_cur_loc - dst_end) + STRING_SEPARATOR.len;
+
+    uint64_t src_bucket_val = FnvHash(src_cur_loc, (src_next_loc - STRING_SEPARATOR.len) - src_cur_loc, FNV64_SEED) % BUCKET_COUNT;
+    uint64_t dst_bucket_val = FnvHash(dst_cur_loc, (dst_next_loc - STRING_SEPARATOR.len) - dst_cur_loc, FNV64_SEED) % BUCKET_COUNT;
+
+    uint64_t src_next_bucket_val = src_bucket_val;
+    uint64_t dst_next_bucket_val = dst_bucket_val;
 
 
-    //BUCKET_COUNT
-    uint64_t current_bucket = 0;
+    context->AddWarning((char *) src.ptr);
+    context->AddWarning((char *) dst->ptr);
+    context->AddWarning("---loop---");
 
-    //DST assumed to be bigger, loop through it first, compare to smaller
-    while (dst_loc < dst_end) {
-      //uint64_t mybucket = FnvHash(str.ptr, str.len, FNV64_SEED) % dhs->bucket_count;
-      dst_delim_loc = (uint8_t*)memchr(dst_loc, *STRING_SEPARATOR.ptr, dst_loc - dst_end);
+    context->AddWarning((char *) dst_chunk_start);
 
-      //context->AddWarning((char *) ToStringVal(context, dst_delim_loc - dst_loc).ptr);
-      if ( dst_delim_loc ) {
-        current_bucket = FnvHash(dst_loc, dst_delim_loc - dst_loc, FNV64_SEED) % BUCKET_COUNT;
+    do {
+      context->AddWarning("--iter--");
+      context->AddWarning((char *) ToStringVal(context, dst->ptr).ptr);
+      context->AddWarning((char *) ToStringVal(context, (dst_next_loc - STRING_SEPARATOR.len) - dst_cur_loc).ptr);
+      context->AddWarning((char *) ToStringVal(context, dst_bucket_val).ptr);
+      context->AddWarning((char *) ToStringVal(context, src.ptr).ptr);
+      context->AddWarning((char *) ToStringVal(context, (src_next_loc - STRING_SEPARATOR.len) - src_cur_loc).ptr);
+      context->AddWarning((char *) ToStringVal(context, src_bucket_val).ptr);
 
-        //sub-loop through source until higher bucket found, compare each value in same bucket
-        bool match_found = false;
-        while (src_loc < src_end) {
-          src_delim_loc = (uint8_t*)memchr(src_loc, *STRING_SEPARATOR.ptr, src_loc - src_end);
-
-          if ( (dst_delim_loc - dst_loc) == (src_loc - src_end) ) {
-            //strings are same size
-            if (!memcmp(dst_loc, src_loc, src_loc - src_end)) {
-              //strings identical, set do not add flag, exit loop
-              match_found = true;
-              src_loc = src_end;
-            }
+      // context->AddWarning((char *) ToStringVal(context, dst_bucket_val < src_bucket_val).ptr);
+      if (dst_bucket_val < src_bucket_val) { // OR at end of dst?
+        //keep going until > src_bucket or end of dst
+        dst_chunk_start = dst_cur_loc;
+        //context->AddWarning((char *) ToStringVal(context, dst_end-dst_next_loc).ptr);
+        
+        while (dst_bucket_val < src_bucket_val && dst_next_loc < dst_end) {
+          context->AddWarning("-while-");
+          // context->AddWarning((char *) ToStringVal(context, dst_bucket_val).ptr);
+          // context->AddWarning((char *) ToStringVal(context, src_bucket_val).ptr);
+          //keep searching
+          dst_cur_loc = dst_next_loc;
+          dst_next_loc = (uint8_t*)memchr(dst_cur_loc, *STRING_SEPARATOR.ptr, dst_cur_loc - dst_end) + STRING_SEPARATOR.len;
+          if (dst_next_loc) {
+            dst_bucket_val = FnvHash(dst_cur_loc, (dst_next_loc - STRING_SEPARATOR.len) - dst_cur_loc, FNV64_SEED) % BUCKET_COUNT;  
+          } else {
+            dst_next_loc = dst_end;  
+            context->AddWarning("skip to end dst");
           }
-          src_loc = src_delim_loc + STRING_SEPARATOR.len;
+          
+          
+          // context->AddWarning((char *) ToStringVal(context, dst_bucket_val).ptr);
+          // context->AddWarning((char *) ToStringVal(context, dst_next_loc < dst_end).ptr);
+          
         }
 
+        //if at end of dst and bucket is same: write entire dst
+        if (dst_next_loc == dst_end && dst_bucket_val == dst_next_bucket_val) {
+          src_cur_loc = dst_next_loc;
+          context->AddWarning("reached end dst");
+        }
 
-        dst_loc = dst_delim_loc + STRING_SEPARATOR.len;
+        //append dst
+        memcpy(buffer_loc, dst_chunk_start, dst_cur_loc - dst_chunk_start);
+        buffer_loc += (dst_cur_loc - dst_chunk_start);
+
+        //either way write out to buffer
+
+        // if (dst_next_bucket_val > src_bucket_val) {
+        //   //write out to buffer
+        // }
+
+      } else if (src_bucket_val < dst_bucket_val){
+        //loop through src until > dst_bucket or end of src
+        src_chunk_start = src_cur_loc;
+        //context->AddWarning((char *) ToStringVal(context, src_end-src_next_loc).ptr);
+        
+        //context->AddWarning((char *) ToStringVal(context, (src_bucket_val < dst_bucket_val && src_next_loc < src_end)).ptr);
+
+        while (src_bucket_val < dst_bucket_val && src_next_loc < src_end) {
+          context->AddWarning("-while src-");
+          // context->AddWarning((char *) ToStringVal(context, dst_bucket_val).ptr);
+          // context->AddWarning((char *) ToStringVal(context, src_bucket_val).ptr);
+          //keep searching
+          src_cur_loc = src_next_loc;
+          src_next_loc = (uint8_t*)memchr(src_cur_loc, *STRING_SEPARATOR.ptr, src_cur_loc - src_end) + STRING_SEPARATOR.len;
+          if (src_next_loc) {
+            src_bucket_val = FnvHash(src_cur_loc, (src_next_loc - STRING_SEPARATOR.len) - src_cur_loc, FNV64_SEED) % BUCKET_COUNT;  
+          } else {
+            src_next_loc = src_end;
+            context->AddWarning("skip to end src");
+          }
+          
+          
+          // context->AddWarning((char *) ToStringVal(context, dst_bucket_val).ptr);
+          // context->AddWarning((char *) ToStringVal(context, dst_next_loc < dst_end).ptr);
+          
+        }
+
+        //if at end of dst and bucket is same: write entire dst
+        if (src_next_loc == src_end && src_bucket_val == src_next_bucket_val) {
+          src_cur_loc = src_next_loc;
+          context->AddWarning("reached end");
+        }
+
+        //append dst
+        memcpy(buffer_loc, src_chunk_start, src_cur_loc - src_chunk_start);
+        buffer_loc += src_cur_loc - src_chunk_start;
+
+          context->AddWarning("merge buff");
+      context->AddWarning((char *) ToStringVal(context, buffer_loc - merge_buffer).ptr);
+      context->AddWarning((char *) StringVal(merge_buffer, buffer_loc - merge_buffer).ptr);
+
+        context->AddWarning("buffer loc");
+
+
+        //exit: dst_next_loc = dst_end;
+      } else {
+        context->AddWarning("same");
       }
-      else {
-        //no separator found, must be end of string already, error
-        //!todo: remove
-        dst_loc = dst_end;
-        context->AddWarning("shouldn't not find 0");
-      }
+    } while (dst_next_loc < dst_end);
 
-    }
+    context->AddWarning("merge buff final");
+    context->AddWarning((char *) ToStringVal(context, buffer_loc - merge_buffer).ptr);
+    context->AddWarning((char *) StringVal(merge_buffer, buffer_loc - merge_buffer).ptr);
 
-    //loop through longer comparing to shorter
+    context->Free(dst->ptr);
+    dst->ptr = context->Reallocate(merge_buffer, buffer_loc - merge_buffer);
+    dst->len = buffer_loc - merge_buffer; 
 
-    context->AddWarning("merg concat");
-    int new_len = dst->len + src.len;
-    dst->ptr = context->Reallocate(dst->ptr, new_len);
-    memcpy(dst->ptr + dst->len, src.ptr, src.len);
-    dst->len = new_len; 
+    // int src_len = src.len - sizeof(MAGIC_BYTE_DELIMSTR);
+    // int new_len = dst->len + src_len;
+    // dst->ptr = context->Reallocate(dst->ptr, new_len);
+    // memcpy(dst->ptr + dst->len, src.ptr + sizeof(MAGIC_BYTE_DELIMSTR), src_len);
+    // dst->len = new_len; 
 
-    context->Free(merge_buffer);
+    //context->Free(merge_buffer);
 
   } else {
     context->AddWarning("undefined");
   }
 
-  //StringVal result("a\0");
-  //context->AddWarning("merged");
-  // if (*src.ptr || src.len==1) {
-  //   //intermediate type is delimited string
-  //   result = StringVal("delim list");
-  // } else {
-    // const DistHashSet* src_dhs = reinterpret_cast<const DistHashSet*>(src.ptr);
-    // DistHashSet* dst_strdelim = reinterpret_cast<DistHashSet*>(dst->ptr);
-    
-
-  // }
   
 }
 
@@ -430,10 +489,10 @@ StringVal DistHashSetFinalize(FunctionContext* context, const StringVal& strvald
   //strvaldhs.len > 1 && 
   if (strvaldhs.ptr[0] == MAGIC_BYTE_DELIMSTR) {
     //intermediate type is delimited string
-    context->AddWarning("final delimstr"); //debug
+    context->AddWarning("!!Final delimstr"); //debug
 
     //debug
-    context->AddWarning((char *) strvaldhs.ptr);
+    //context->AddWarning((char *) strvaldhs.ptr);
 
     //count number of seperators
     int n = count(strvaldhs.ptr, strvaldhs.ptr + strvaldhs.len, (int) *STRING_SEPARATOR.ptr);
@@ -488,6 +547,7 @@ StringVal DistHashSetFinalize(FunctionContext* context, const StringVal& strvald
       context->Free((uint8_t*) dhs->buckets);
       result = ToStringVal(context, unique_count);
     } else {
+      //this handles an empty dhs, e.g. all nulls or 0 rows
       result = StringVal::null();
       // result = ToStringVal(context, strvaldhs.len);
     }
@@ -501,76 +561,6 @@ StringVal DistHashSetFinalize(FunctionContext* context, const StringVal& strvald
 
   //both paths lead to freeing ptr
   context->Free(strvaldhs.ptr); 
-
-  // assert(strvaldhs.len == sizeof(DistHashSet));
-  // DistHashSet* dhs = reinterpret_cast<DistHashSet*>(strvaldhs.ptr);
-  // StringVal result;
-  // //if string is null, return null
-  // if (dhs->count == 0) {
-  //   result = StringVal::null();
-  // } else {
-  //   // Copies the result to memory owned by Impala
-    
-  //   // StringVal hello = StringVal("hello");
-  //   // dhs->buckets[0] = &hello;
-  
-
-  //   // if (dhs->buckets[16363])
-  //   // {
-  //   //   if(!dhs->buckets[16363]->is_null) {
-  //   //     //result = StringVal("string null");
-  //   //     result = ToStringVal(context, dhs->buckets[16363]->len);
-  //   //   } else {
-  //   //     result = StringVal("string null");
-  //   //     // result = StringVal(context, dhs->buckets[16363]->len);
-  //   //     // memcpy(result.ptr, dhs->buckets[16363]->ptr, dhs->buckets[16363]->len);
-  //   //     //result = StringVal(dhs->buckets[0]->ptr, dhs->buckets[0]->len);
-  //   //   }
-  //   // } else {
-  //   //   //result = StringVal("bucket null");
-  //   //   result = ToStringVal(context, dhs->bucket_count);
-  //   // }
-
-
-
-  //   // result = StringVal("skip!");
-  //   // StringVal str = StringVal("Hello");
-  //   // result = ToStringVal(context, FnvHash(str.ptr, str.len, FNV64_SEED) % dhs->bucket_count);
-
-  //   //result = ToStringVal(context, sizeof(StringVal("hello!")));
-  //   //result = *dhs->buckets[0];
-  //   //result = ToStringVal(context, *dhs->bucket_count);
-  //   //result = StringVal("placeholder");
-
-
-  //   if (dhs->magic_byte) {
-  //     result = StringVal("not zero");
-  //   } else {
-  //     result = StringVal("zero");
-  //   }
-
-  // }
-
-  ////Free memory
-  //check mem allocation
-  // for (int i = 0; i < dhs->bucket_count; i++) {
-  //   if (dhs->buckets[i]) {
-  //     if (dhs->buckets[i]->ptr) {
-  //       //free bucket ptrs
-  //       context->Free((uint8_t*) dhs->buckets[i]->ptr);  
-  //     }  
-  //     //free buckets contents
-  //     context->Free((uint8_t*) dhs->buckets[i]);
-  //     dhs->buckets[i] = NULL;
-  //   }  
-  // }
-
-  // //free buckets array
-  // context->Free((uint8_t*) dhs->buckets);
-  // // //free struct
-  // if (strvaldhs.ptr) {
-
-
   
   return result;
 }
