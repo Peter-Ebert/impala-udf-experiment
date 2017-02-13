@@ -20,3 +20,22 @@ Num_nodes=1
 
 
 //todo: could sort on insert to bucket and merge sort in our merge sort
+
+break DistHashSetMerge
+
+break 413
+
+display src.ptr
+display dst->ptr
+
+display merge_buffer
+
+display src_chunk_start
+display dst_chunk_start
+
+display src_bucket_val
+display dst_bucket_val
+
+display src_cur_loc
+display dst_cur_loc
+

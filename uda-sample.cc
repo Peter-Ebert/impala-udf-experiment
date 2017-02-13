@@ -1,16 +1,5 @@
-// Copyright 2012 Cloudera Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Abandon hope all ye who enter here
+// code has not been cleaned up at all, TURN BACK NOW
 
 #include "uda-sample.h"
 #include <assert.h>
@@ -303,7 +292,7 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
 
 
 
-  if (dst->ptr[0] == MAGIC_BYTE_DHS) {
+  if (dst->ptr[0] == MAGIC_BYTE_DHS) { //todo:move to end, less likely than other if
     //init was run for dhs, drop and set equal to current string to be merged
     //should happen once per merge
     context->Free(dst->ptr);
@@ -344,35 +333,35 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
     uint64_t dst_next_bucket_val = dst_bucket_val;
 
 
-    context->AddWarning((char *) src.ptr);
-    context->AddWarning((char *) dst->ptr);
-    context->AddWarning("---loop---");
+    // context->AddWarning((char *) src.ptr);
+    // context->AddWarning((char *) dst->ptr);
+    // context->AddWarning("---loop---");
 
-    context->AddWarning((char *) dst_chunk_start);
+    // context->AddWarning((char *) dst_chunk_start);
 
     do {
-      context->AddWarning("--iter--");
-      context->AddWarning((char *) ToStringVal(context, dst->ptr).ptr);
-      context->AddWarning((char *) ToStringVal(context, (dst_next_loc - STRING_SEPARATOR.len) - dst_cur_loc).ptr);
-      context->AddWarning((char *) ToStringVal(context, dst_bucket_val).ptr);
-      context->AddWarning((char *) ToStringVal(context, src.ptr).ptr);
-      context->AddWarning((char *) ToStringVal(context, (src_next_loc - STRING_SEPARATOR.len) - src_cur_loc).ptr);
-      context->AddWarning((char *) ToStringVal(context, src_bucket_val).ptr);
+      // context->AddWarning("--iter--");
+      // context->AddWarning((char *) ToStringVal(context, dst->ptr).ptr);
+      // context->AddWarning((char *) ToStringVal(context, (dst_next_loc - STRING_SEPARATOR.len) - dst_cur_loc).ptr);
+      // context->AddWarning((char *) ToStringVal(context, dst_bucket_val).ptr);
+      // context->AddWarning((char *) ToStringVal(context, src.ptr).ptr);
+      // context->AddWarning((char *) ToStringVal(context, (src_next_loc - STRING_SEPARATOR.len) - src_cur_loc).ptr);
+      // context->AddWarning((char *) ToStringVal(context, src_bucket_val).ptr);
 
       // context->AddWarning((char *) ToStringVal(context, dst_bucket_val < src_bucket_val).ptr);
       if (dst_bucket_val < src_bucket_val) { // OR at end of dst?
         //keep going until > src_bucket or end of dst
-        dst_chunk_start = dst_cur_loc;
+        
         //context->AddWarning((char *) ToStringVal(context, dst_end-dst_next_loc).ptr);
         
         while (dst_bucket_val < src_bucket_val && dst_next_loc < dst_end) {
-          context->AddWarning("-while-");
+          // context->AddWarning("-while-");
           // context->AddWarning((char *) ToStringVal(context, dst_bucket_val).ptr);
           // context->AddWarning((char *) ToStringVal(context, src_bucket_val).ptr);
           //keep searching
           dst_cur_loc = dst_next_loc;
           dst_next_loc = (uint8_t*)memchr(dst_cur_loc, *STRING_SEPARATOR.ptr, dst_cur_loc - dst_end) + STRING_SEPARATOR.len;
-          if (dst_next_loc) {
+          if (dst_cur_loc < dst_end && src_next_loc) {
             dst_bucket_val = FnvHash(dst_cur_loc, (dst_next_loc - STRING_SEPARATOR.len) - dst_cur_loc, FNV64_SEED) % BUCKET_COUNT;  
           } else {
             dst_next_loc = dst_end;  
@@ -385,15 +374,17 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
           
         }
 
-        //if at end of dst and bucket is same: write entire dst
-        if (dst_next_loc == dst_end && dst_bucket_val == dst_next_bucket_val) {
-          src_cur_loc = dst_next_loc;
+        //reached end
+        if (dst_next_loc == dst_end && dst_bucket_val < src_bucket_val) {
+          dst_cur_loc = dst_next_loc;
           context->AddWarning("reached end dst");
         }
 
         //append dst
         memcpy(buffer_loc, dst_chunk_start, dst_cur_loc - dst_chunk_start);
         buffer_loc += (dst_cur_loc - dst_chunk_start);
+        //advance start of chunk
+        dst_chunk_start = dst_cur_loc;
 
         //either way write out to buffer
 
@@ -403,19 +394,19 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
 
       } else if (src_bucket_val < dst_bucket_val){
         //loop through src until > dst_bucket or end of src
-        src_chunk_start = src_cur_loc;
+        
         //context->AddWarning((char *) ToStringVal(context, src_end-src_next_loc).ptr);
         
         //context->AddWarning((char *) ToStringVal(context, (src_bucket_val < dst_bucket_val && src_next_loc < src_end)).ptr);
 
         while (src_bucket_val < dst_bucket_val && src_next_loc < src_end) {
-          context->AddWarning("-while src-");
+          // context->AddWarning("-while src-");
           // context->AddWarning((char *) ToStringVal(context, dst_bucket_val).ptr);
           // context->AddWarning((char *) ToStringVal(context, src_bucket_val).ptr);
           //keep searching
           src_cur_loc = src_next_loc;
           src_next_loc = (uint8_t*)memchr(src_cur_loc, *STRING_SEPARATOR.ptr, src_cur_loc - src_end) + STRING_SEPARATOR.len;
-          if (src_next_loc) {
+          if (src_cur_loc < src_end && src_next_loc) {
             src_bucket_val = FnvHash(src_cur_loc, (src_next_loc - STRING_SEPARATOR.len) - src_cur_loc, FNV64_SEED) % BUCKET_COUNT;  
           } else {
             src_next_loc = src_end;
@@ -428,32 +419,52 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
           
         }
 
-        //if at end of dst and bucket is same: write entire dst
-        if (src_next_loc == src_end && src_bucket_val == src_next_bucket_val) {
-          src_cur_loc = src_next_loc;
-          context->AddWarning("reached end");
+        //end reached and less than, write it all
+        if (src_next_loc == src_end && src_bucket_val < dst_bucket_val) {
+          src_cur_loc = src_next_loc;//todo:move out?
+          context->AddWarning("reached end src");
         }
 
         //append dst
         memcpy(buffer_loc, src_chunk_start, src_cur_loc - src_chunk_start);
         buffer_loc += src_cur_loc - src_chunk_start;
+        src_chunk_start = src_cur_loc;
+          
+      // context->AddWarning((char *) ToStringVal(context, buffer_loc - merge_buffer).ptr);
+      // context->AddWarning((char *) StringVal(merge_buffer, buffer_loc - merge_buffer).ptr);
 
-          context->AddWarning("merge buff");
-      context->AddWarning((char *) ToStringVal(context, buffer_loc - merge_buffer).ptr);
-      context->AddWarning((char *) StringVal(merge_buffer, buffer_loc - merge_buffer).ptr);
-
-        context->AddWarning("buffer loc");
+      //   context->AddWarning("buffer loc");
 
 
         //exit: dst_next_loc = dst_end;
       } else {
         context->AddWarning("same");
+        dst_chunk_start = dst_end;
+        src_chunk_start = src_end;
       }
-    } while (dst_next_loc < dst_end);
+
+      // context->AddWarning("what's left");
+      // context->AddWarning((char *) ToStringVal(context, src_next_loc).ptr);
+      // context->AddWarning((char *) ToStringVal(context, dst_next_loc).ptr);
+
+      // context->AddWarning((char *) ToStringVal(dst_bucket_val < src_bucket_val && dst_next_loc < dst_end).ptr);
+      // context->AddWarning((char *) ToStringVal(src_bucket_val < dst_bucket_val && src_next_loc < src_end).ptr);
+
+    } while (dst_chunk_start < dst_end && src_chunk_start < src_end);
+    //!todo:test empty string at end of list
+
+    //check if one list still contains entries, if so append
+    if (dst_chunk_start < dst_end) {
+      memcpy(buffer_loc, dst_chunk_start, dst_end - dst_chunk_start);
+      buffer_loc += (dst_end - dst_chunk_start);
+    } else if (src_chunk_start < src_end) {
+      memcpy(buffer_loc, src_chunk_start, src_end - src_chunk_start);
+      buffer_loc += src_end - src_chunk_start;
+    }
 
     context->AddWarning("merge buff final");
-    context->AddWarning((char *) ToStringVal(context, buffer_loc - merge_buffer).ptr);
-    context->AddWarning((char *) StringVal(merge_buffer, buffer_loc - merge_buffer).ptr);
+    // context->AddWarning((char *) ToStringVal(context, buffer_loc - merge_buffer).ptr);
+    // context->AddWarning((char *) StringVal(merge_buffer, buffer_loc - merge_buffer).ptr);
 
     context->Free(dst->ptr);
     dst->ptr = context->Reallocate(merge_buffer, buffer_loc - merge_buffer);
