@@ -21,9 +21,26 @@ Num_nodes=1
 
 //todo: could sort on insert to bucket and merge sort in our merge sort
 
+?????????????
+	DWorldZcostarringZliquidZ
+
+2: dst->ptr = (uint8_t *) 0x6a8e90 "DHelloZliquidZ"
+1: src.ptr = (uint8_t *) 0x6334c0 "DHelloZliquidZ"
+//collision!
+
+break DistHashSetFinalize
+watch n = 3
+
 break DistHashSetMerge
 
+watch dst->len = 25
+
+continue 4x
+
 break 413
+
+watch merge_buffer == "DHelloZliquidZ"
+watch buffer_loc - merge_buffer  > 8
 
 display src.ptr
 display dst->ptr
@@ -39,3 +56,5 @@ display dst_bucket_val
 display src_cur_loc
 display dst_cur_loc
 
+break DistHashSetUpdate
+watch dhs->buckets[mybucket] == NULL
