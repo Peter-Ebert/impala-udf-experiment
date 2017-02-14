@@ -400,7 +400,7 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
           //keep searching
           dst_cur_loc = dst_next_loc;
           dst_next_loc = (uint8_t*)memchr(dst_cur_loc, *STRING_SEPARATOR.ptr, dst_cur_loc - dst_end) + STRING_SEPARATOR.len;
-          if (dst_cur_loc < dst_end && src_next_loc) {
+          if (dst_cur_loc < dst_end && dst_next_loc) {
             dst_bucket_val = FnvHash(dst_cur_loc, (dst_next_loc - STRING_SEPARATOR.len) - dst_cur_loc, FNV64_SEED) % BUCKET_COUNT;  
           } else {
             dst_next_loc = dst_end;  
@@ -415,6 +415,7 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
 
         //reached end
         if (dst_next_loc == dst_end && dst_bucket_val < src_bucket_val) {
+          //todo: check needed?
           dst_cur_loc = dst_next_loc;
           context->AddWarning("reached end dst");
         }
@@ -489,7 +490,7 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
         do {
           src_cur_loc = src_next_loc;
           src_next_loc = (uint8_t*)memchr(src_cur_loc, *STRING_SEPARATOR.ptr, src_cur_loc - src_end) + STRING_SEPARATOR.len;
-          src_next_bucket_val = FnvHash(src_cur_loc, (src_next_loc - STRING_SEPARATOR.len) - dst_cur_loc, FNV64_SEED) % BUCKET_COUNT;
+          src_next_bucket_val = FnvHash(src_cur_loc, (src_next_loc - STRING_SEPARATOR.len) - src_cur_loc, FNV64_SEED) % BUCKET_COUNT;
         } while (src_next_bucket_val == src_bucket_val && src_cur_loc < src_end);
         uint8_t* src_bucket_end = src_cur_loc;
         //all src variables setup for next outter loop at this point
@@ -500,34 +501,48 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
           //loop through src, test for duplicate
           bool match_found = false;
           uint8_t* src_inner_cur_loc = src_bucket_start;
-          uint8_t* src_inner_next_loc = src_bucket_start;
-          while (src_inner_cur_loc < src_bucket_end) {
-            src_inner_cur_loc = (uint8_t*)memchr(src_inner_cur_loc, *STRING_SEPARATOR.ptr, src_inner_cur_loc - src_end) + STRING_SEPARATOR.len;
-            //todo: check for match
-            // if ( (str.len) == (loc_delim - loc_start) ) {
-            //   //strings are same size
-            //   if (!memcmp(str.ptr, loc_start, str.len)) {
-            //     //strings identical, set do not add flag, exit loop
-            //     match_found = true;
-            //     loc_delim = bucket_end;
-            //   }
-            // }
-          }
+          uint8_t* src_inner_next_loc = (uint8_t*)memchr(src_inner_cur_loc, *STRING_SEPARATOR.ptr, src_inner_cur_loc - src_bucket_end) + STRING_SEPARATOR.len;
+          do {
 
+            if ( (src_inner_cur_loc - src_inner_next_loc) == (dst_cur_loc - dst_next_loc) ) {
+              if (!memcmp(dst_cur_loc, src_inner_cur_loc, src_inner_cur_loc - src_inner_next_loc)) {
+                match_found = true;
+              }
+            }
+            src_inner_cur_loc = (uint8_t*)memchr(src_inner_cur_loc, *STRING_SEPARATOR.ptr, src_inner_cur_loc - src_bucket_end) + STRING_SEPARATOR.len;
+
+          } while (src_inner_cur_loc < src_bucket_end && !match_found);
+        
           if (!match_found) {
             //append to end
+            memcpy(buffer_loc, dst_cur_loc, dst_next_loc - dst_cur_loc);
+            buffer_loc += (dst_next_loc - dst_cur_loc);            
           }
+
+          //advance position
+          dst_cur_loc = dst_next_loc;
+          dst_next_loc = (uint8_t*)memchr(dst_cur_loc, *STRING_SEPARATOR.ptr, dst_cur_loc - dst_end) + STRING_SEPARATOR.len;
+          if (dst_cur_loc < dst_end && dst_next_loc) {
+            dst_bucket_val = FnvHash(dst_cur_loc, (dst_next_loc - STRING_SEPARATOR.len) - dst_cur_loc, FNV64_SEED) % BUCKET_COUNT;
+          }
+ 
 
           //if not found
           //append dst
           // memcpy(buffer_loc, dst_chunk_start, dst_cur_loc - dst_chunk_start);
           // buffer_loc += (dst_cur_loc - dst_chunk_start);
-        } while (dst_bucket_val == src_bucket_val);
+        } while (dst_bucket_val == src_bucket_val && dst_next_loc < dst_end);
 
-        //todo: add entire src bucket
+        //append src bucket
+        memcpy(buffer_loc, src_chunk_start, src_cur_loc - src_chunk_start);
+        buffer_loc += src_cur_loc - src_chunk_start;
+        //advance src
+        src_chunk_start = src_cur_loc;
+        src_bucket_val = src_next_bucket_val;
 
-        // dst_chunk_start = dst_end;
-        // src_chunk_start = src_end;
+        //advance to chunk to first item in next dst bucket
+        dst_chunk_start = dst_cur_loc;
+
       }
 
       // context->AddWarning("what's left");
@@ -540,7 +555,7 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
     } while (dst_chunk_start < dst_end && src_chunk_start < src_end);
     //!todo:test empty string at end of list
 
-    //check if one list still contains entries, if so append
+    //check if one list still contains entries, if so append and advance
     if (dst_chunk_start < dst_end) {
       memcpy(buffer_loc, dst_chunk_start, dst_end - dst_chunk_start);
       buffer_loc += (dst_end - dst_chunk_start);
