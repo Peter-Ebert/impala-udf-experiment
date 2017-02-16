@@ -78,7 +78,7 @@ static const StringVal STRING_SEPARATOR((uint8_t*)"Z", 1); //"\0"
 static const uint8_t MAGIC_BYTE_DHS = 'H';
 static const uint8_t MAGIC_BYTE_DELIMSTR = 'D';
 static const uint8_t MAGIC_BYTE_SIZE = 1;
-static const int BUCKET_COUNT = 5;
+static const int BUCKET_COUNT = 4;
 //static const StringVal MAGIC_BYTE_DELIMSTR((uint8_t*)255, 1);
 
 struct DistHashSet {
@@ -216,12 +216,9 @@ void DistHashSetUpdate(FunctionContext* context, const StringVal& str, StringVal
 // AvgInit().
 const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& strvaldhs) {
   //ensure this is a disthashset, use magic byte?
-  assert(strvaldhs.len == sizeof(DistHashSet));
+  //assert(strvaldhs.len == sizeof(DistHashSet));
   StringVal temp;
-  temp.ptr = context->Allocate(sizeof(MAGIC_BYTE_DELIMSTR));
-  memcpy(temp.ptr, &MAGIC_BYTE_DELIMSTR, sizeof(MAGIC_BYTE_DELIMSTR));
-  temp.len = sizeof(MAGIC_BYTE_DELIMSTR);
-  temp.is_null = false;
+  
 
   //result.is_null = true;
   // if (!result.ptr) {
@@ -235,19 +232,16 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
     //intermediate type is delimited string
     //result = StringVal("delim list"); //shouldn't happen
     context->AddWarning("serialize strdelim shouldn't happen");
+    context->AddWarning((char *) strvaldhs.ptr);
+
+    temp.ptr = strvaldhs.ptr;
+    temp.len = strvaldhs.len;
   } else {
+    temp.ptr = context->Allocate(sizeof(MAGIC_BYTE_DELIMSTR));
+    memcpy(temp.ptr, &MAGIC_BYTE_DELIMSTR, sizeof(MAGIC_BYTE_DELIMSTR));
+    temp.len = sizeof(MAGIC_BYTE_DELIMSTR);
+    temp.is_null = false;
 
-//     StringVal fixed("a\0");
-// context->AddWarning((char *) ToStringVal(context, fixed.len).ptr);
-//     StringVal result(context, fixed.len);
-//     memcpy(result.ptr, fixed.ptr, fixed.len);
-
-    // if(*result.ptr) {
-    //   context->AddWarning("not dhs");
-    // }
-
-    // StringVal result(context, strvaldhs.len);
-    // memcpy(result.ptr, strvaldhs.ptr, strvaldhs.len);
 
     
     DistHashSet* dhs = reinterpret_cast<DistHashSet*>(strvaldhs.ptr);
@@ -266,32 +260,6 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
             memcpy(temp.ptr + temp.len, dhs->buckets[i]->ptr, dhs->buckets[i]->len);
             temp.len = new_len;
 
-            // if (temp.len == 0) {
-            //   context->AddWarning("created");
-              
-            //   context->Free(temp.ptr);
-            //   temp.ptr = context->Allocate(dhs->buckets[i]->len);
-            //   memcpy(temp.ptr, dhs->buckets[i]->ptr, dhs->buckets[i]->len);
-            //   temp.len = dhs->buckets[i]->len;
-            //   temp.is_null = false;
-              
-            // }
-
-            //append to result
-            
-            //context->AddWarning("always append");
-            // int new_len = temp.len + dhs->buckets[i]->len;
-            // temp.ptr = context->Reallocate(temp.ptr, new_len);
-            // memcpy(temp.ptr + temp.len, dhs->buckets[i]->ptr, dhs->buckets[i]->len);
-            // temp.len = new_len;
-            
-////              memcpy(result.ptr, dhs->buckets[i]->ptr, dhs->buckets[i]->len)
-          
-            //result = StringVal("1234");
-            
-            // if(result.len == 0) {
-            //   context->AddWarning("res is still 0");
-            // }
             
             //free bucket ptrs
             context->Free((uint8_t*) dhs->buckets[i]->ptr);  
@@ -399,8 +367,9 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
           // context->AddWarning((char *) ToStringVal(context, src_bucket_val).ptr);
           //keep searching
           dst_cur_loc = dst_next_loc;
-          dst_next_loc = (uint8_t*)memchr(dst_cur_loc, *STRING_SEPARATOR.ptr, dst_cur_loc - dst_end) + STRING_SEPARATOR.len;
-          if (dst_cur_loc < dst_end && dst_next_loc) {
+          
+          if (dst_cur_loc < dst_end) {
+            dst_next_loc = (uint8_t*)memchr(dst_cur_loc, *STRING_SEPARATOR.ptr, dst_cur_loc - dst_end) + STRING_SEPARATOR.len;
             dst_bucket_val = FnvHash(dst_cur_loc, (dst_next_loc - STRING_SEPARATOR.len) - dst_cur_loc, FNV64_SEED) % BUCKET_COUNT;  
           } else {
             dst_next_loc = dst_end;  
@@ -415,7 +384,7 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
 
         //reached end
         if (dst_next_loc == dst_end && dst_bucket_val < src_bucket_val) {
-          //todo: check needed?
+          
           dst_cur_loc = dst_next_loc;
           context->AddWarning("reached end dst");
         }
@@ -445,8 +414,9 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
           // context->AddWarning((char *) ToStringVal(context, src_bucket_val).ptr);
           //keep searching
           src_cur_loc = src_next_loc;
-          src_next_loc = (uint8_t*)memchr(src_cur_loc, *STRING_SEPARATOR.ptr, src_cur_loc - src_end) + STRING_SEPARATOR.len;
-          if (src_cur_loc < src_end && src_next_loc) {
+          
+          if (src_cur_loc < src_end) {
+            src_next_loc = (uint8_t*)memchr(src_cur_loc, *STRING_SEPARATOR.ptr, src_cur_loc - src_end) + STRING_SEPARATOR.len;
             src_bucket_val = FnvHash(src_cur_loc, (src_next_loc - STRING_SEPARATOR.len) - src_cur_loc, FNV64_SEED) % BUCKET_COUNT;
           } else {
             src_next_loc = src_end;
@@ -479,20 +449,25 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
         //exit: dst_next_loc = dst_end;
       } else {
         context->AddWarning("same");
-        //work on this hash value only
+        context->AddWarning((char *) src.ptr);
+        context->AddWarning((char *) dst->ptr);
+        //////Same Bucket Values//////
+        //work on this bucket value only
         
-        //skip if found
         
         //todo: test if last item in both have collision
         //find end of src bucket
         uint8_t* src_bucket_start = src_cur_loc;
         uint64_t src_next_bucket_val = src_bucket_val;
-        do {
+        while (src_next_bucket_val == src_bucket_val && src_next_loc < src_end) {
           src_cur_loc = src_next_loc;
-          src_next_loc = (uint8_t*)memchr(src_cur_loc, *STRING_SEPARATOR.ptr, src_cur_loc - src_end) + STRING_SEPARATOR.len;
-          src_next_bucket_val = FnvHash(src_cur_loc, (src_next_loc - STRING_SEPARATOR.len) - src_cur_loc, FNV64_SEED) % BUCKET_COUNT;
-        } while (src_next_bucket_val == src_bucket_val && src_cur_loc < src_end);
-        uint8_t* src_bucket_end = src_cur_loc;
+          if (src_cur_loc < src_end) {
+            src_next_loc = (uint8_t*)memchr(src_cur_loc, *STRING_SEPARATOR.ptr, src_cur_loc - src_end) + STRING_SEPARATOR.len;
+            src_next_bucket_val = FnvHash(src_cur_loc, (src_next_loc - STRING_SEPARATOR.len) - src_cur_loc, FNV64_SEED) % BUCKET_COUNT;
+          } 
+        }
+
+        uint8_t* src_bucket_end = src_next_loc;
         //all src variables setup for next outter loop at this point
 
         //loop through current dst bucket
@@ -501,16 +476,16 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
           //loop through src, test for duplicate
           bool match_found = false;
           uint8_t* src_inner_cur_loc = src_bucket_start;
-          uint8_t* src_inner_next_loc = (uint8_t*)memchr(src_inner_cur_loc, *STRING_SEPARATOR.ptr, src_inner_cur_loc - src_bucket_end) + STRING_SEPARATOR.len;
+          uint8_t* src_inner_next_loc;
           do {
+            src_inner_next_loc = (uint8_t*)memchr(src_inner_cur_loc, *STRING_SEPARATOR.ptr, src_bucket_end - src_inner_cur_loc) + STRING_SEPARATOR.len;
 
-            if ( (src_inner_cur_loc - src_inner_next_loc) == (dst_cur_loc - dst_next_loc) ) {
-              if (!memcmp(dst_cur_loc, src_inner_cur_loc, src_inner_cur_loc - src_inner_next_loc)) {
+            if ( (src_inner_next_loc - src_inner_cur_loc) == (dst_next_loc - dst_cur_loc) ) {
+              if (!memcmp(dst_cur_loc, src_inner_cur_loc, src_inner_next_loc - src_inner_cur_loc)) {
                 match_found = true;
               }
             }
-            src_inner_cur_loc = (uint8_t*)memchr(src_inner_cur_loc, *STRING_SEPARATOR.ptr, src_inner_cur_loc - src_bucket_end) + STRING_SEPARATOR.len;
-
+            src_inner_cur_loc = src_inner_next_loc;
           } while (src_inner_cur_loc < src_bucket_end && !match_found);
         
           if (!match_found) {
@@ -521,8 +496,8 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
 
           //advance position
           dst_cur_loc = dst_next_loc;
-          dst_next_loc = (uint8_t*)memchr(dst_cur_loc, *STRING_SEPARATOR.ptr, dst_cur_loc - dst_end) + STRING_SEPARATOR.len;
-          if (dst_cur_loc < dst_end && dst_next_loc) {
+          if (dst_cur_loc < dst_end) {
+            dst_next_loc = (uint8_t*)memchr(dst_cur_loc, *STRING_SEPARATOR.ptr, dst_end - dst_cur_loc) + STRING_SEPARATOR.len;
             dst_bucket_val = FnvHash(dst_cur_loc, (dst_next_loc - STRING_SEPARATOR.len) - dst_cur_loc, FNV64_SEED) % BUCKET_COUNT;
           }
  
@@ -533,7 +508,7 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
           // buffer_loc += (dst_cur_loc - dst_chunk_start);
         } while (dst_bucket_val == src_bucket_val && dst_next_loc < dst_end);
 
-        //append src bucket
+        //no more dst values, append src bucket
         memcpy(buffer_loc, src_chunk_start, src_cur_loc - src_chunk_start);
         buffer_loc += src_cur_loc - src_chunk_start;
         //advance src
@@ -566,7 +541,7 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
 
     context->AddWarning("merge buff final");
     // context->AddWarning((char *) ToStringVal(context, buffer_loc - merge_buffer).ptr);
-    // context->AddWarning((char *) StringVal(merge_buffer, buffer_loc - merge_buffer).ptr);
+    //context->AddWarning((char *) StringVal(merge_buffer, buffer_loc - merge_buffer).ptr);
 
     context->Free(dst->ptr);
     dst->ptr = context->Reallocate(merge_buffer, buffer_loc - merge_buffer);
@@ -609,6 +584,10 @@ StringVal DistHashSetFinalize(FunctionContext* context, const StringVal& strvald
 
     //count number of seperators
     int n = count(strvaldhs.ptr, strvaldhs.ptr + strvaldhs.len, (int) *STRING_SEPARATOR.ptr);
+    if (n == 5) {
+      context->AddWarning((char *) strvaldhs.ptr);
+
+    }
     result = ToStringVal(context, n);
     // for(int i = 0; i < strvaldhs.len; i++) {
 

@@ -32,6 +32,19 @@ break DistHashSetFinalize
 watch n = 3
 
 break DistHashSetMerge
+break 466
+break 481
+break 492
+break 507
+break 544
+
+display src.ptr
+display dst->ptr
+display src_cur_loc
+display src_next_loc
+display dst_cur_loc
+display dst_next_loc
+
 
 watch dst->len = 25
 
@@ -58,3 +71,11 @@ display dst_cur_loc
 
 break DistHashSetUpdate
 watch dhs->buckets[mybucket] == NULL
+
+break 173
+
+display dhs->buckets[mybucket]->ptr
+display str.ptr
+
+display loc_start
+display loc_delim
