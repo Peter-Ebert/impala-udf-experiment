@@ -93,17 +93,10 @@ bool TestDHS300k() {
   vector<StringVal> vals;
 
   // Test empty input
-  // if (!test.Execute<StringVal>(vals, StringVal::null())) {
-  //   cerr << "DHS empty: " << test.GetErrorMsg() << endl;
-  //   return false;
-  // }
-
-  //Test just empty string
-  // vals.push_back("");
-  // if (!test.Execute<StringVal>(vals, StringVal("1"))) {
-  //   cerr << "DHS: " << test.GetErrorMsg() << endl;
-  //   return false;
-  // }
+  if (!test.Execute<StringVal>(vals, StringVal::null())) {
+    cerr << "DHS empty: " << test.GetErrorMsg() << endl;
+    return false;
+  }
 
   //Test Multiple values
   vals.push_back("Hello");
@@ -111,8 +104,7 @@ bool TestDHS300k() {
   vals.push_back("World");
   vals.push_back("Hello");
   vals.push_back("costarring"); //collides with liquid
-  vals.push_back("liquid");
-  
+  vals.push_back("liquid");  
   
   if (!test.Execute<StringVal>(vals, StringVal("5"))) {
     cerr << "DHS: " << test.GetErrorMsg() << endl;
