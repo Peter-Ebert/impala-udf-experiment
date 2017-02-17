@@ -106,14 +106,15 @@ bool TestDHS300k() {
   // }
 
   //Test Multiple values
-
   vals.push_back("Hello");
+  vals.push_back("");
   vals.push_back("World");
   vals.push_back("Hello");
   vals.push_back("costarring"); //collides with liquid
   vals.push_back("liquid");
   
-  if (!test.Execute<StringVal>(vals, StringVal("4"))) {
+  
+  if (!test.Execute<StringVal>(vals, StringVal("5"))) {
     cerr << "DHS: " << test.GetErrorMsg() << endl;
     return false;
   }

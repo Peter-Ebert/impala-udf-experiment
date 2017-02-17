@@ -78,7 +78,7 @@ static const StringVal STRING_SEPARATOR((uint8_t*)"Z", 1); //"\0"
 static const uint8_t MAGIC_BYTE_DHS = 'H';
 static const uint8_t MAGIC_BYTE_DELIMSTR = 'D';
 static const uint8_t MAGIC_BYTE_SIZE = 1;
-static const int BUCKET_COUNT = 4;
+static const int BUCKET_COUNT = 2;
 //static const StringVal MAGIC_BYTE_DELIMSTR((uint8_t*)255, 1);
 
 struct DistHashSet {
@@ -86,9 +86,9 @@ struct DistHashSet {
   //add check to ensure data is well formed? length at start of string?
   uint8_t magic_byte;
   //to test: handle empty string
-  double sum;
-  int count;
-  int size;
+  double sum;//!remove
+  int count;//!remove
+  int size;//!remove
   int bucket_count;
   bool buckets_need_alloc;
   StringVal** buckets;
@@ -129,7 +129,7 @@ void DistHashSetInit300k(FunctionContext* context, StringVal* strvaldhs) {
 }
 
 void DistHashSetUpdate(FunctionContext* context, const StringVal& str, StringVal* strvaldhs) {
-  // context->AddWarning("updated");
+  context->AddWarning("Update");
   if (str.is_null) return;
   assert(!strvaldhs->is_null);
   assert(strvaldhs->len == sizeof(DistHashSet));
@@ -142,7 +142,7 @@ void DistHashSetUpdate(FunctionContext* context, const StringVal& str, StringVal
     dhs->buckets_need_alloc = false;
   }
   
-  ++dhs->count;
+  ++dhs->count;//!remove
 
   uint64_t mybucket = FnvHash(str.ptr, str.len, FNV64_SEED) % dhs->bucket_count;
   if(!dhs->buckets[mybucket]) {
@@ -175,7 +175,7 @@ void DistHashSetUpdate(FunctionContext* context, const StringVal& str, StringVal
 
     while (loc_start < bucket_end) {
 
-      loc_delim = (uint8_t*)memchr(loc_start, *STRING_SEPARATOR.ptr, loc_start - bucket_end);
+      loc_delim = (uint8_t*)memchr(loc_start, *STRING_SEPARATOR.ptr, bucket_end - loc_start);
 
       if ( (str.len) == (loc_delim - loc_start) ) {
         //strings are same size
@@ -215,6 +215,7 @@ void DistHashSetUpdate(FunctionContext* context, const StringVal& str, StringVal
 // not necessarily persisted across UDA function calls, which is why we don't use it in
 // AvgInit().
 const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& strvaldhs) {
+  context->AddWarning("Serialize");
   //ensure this is a disthashset, use magic byte?
   //assert(strvaldhs.len == sizeof(DistHashSet));
   StringVal temp;
@@ -292,6 +293,7 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
 // simply loop through the list and append where no duplicates, use larger table and loop through smaller for memmbership until greater hash value detected
 // finalize the large combined string by counting each value or /0
 void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal* dst) {
+  context->AddWarning("Merge");
   //if string contains only magic byte there are no values in the list, can safely return
   if (src.len <= 1) return;
 
@@ -369,7 +371,7 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
           dst_cur_loc = dst_next_loc;
           
           if (dst_cur_loc < dst_end) {
-            dst_next_loc = (uint8_t*)memchr(dst_cur_loc, *STRING_SEPARATOR.ptr, dst_cur_loc - dst_end) + STRING_SEPARATOR.len;
+            dst_next_loc = (uint8_t*)memchr(dst_cur_loc, *STRING_SEPARATOR.ptr, dst_end - dst_cur_loc) + STRING_SEPARATOR.len;
             dst_bucket_val = FnvHash(dst_cur_loc, (dst_next_loc - STRING_SEPARATOR.len) - dst_cur_loc, FNV64_SEED) % BUCKET_COUNT;  
           } else {
             dst_next_loc = dst_end;  
@@ -416,7 +418,7 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
           src_cur_loc = src_next_loc;
           
           if (src_cur_loc < src_end) {
-            src_next_loc = (uint8_t*)memchr(src_cur_loc, *STRING_SEPARATOR.ptr, src_cur_loc - src_end) + STRING_SEPARATOR.len;
+            src_next_loc = (uint8_t*)memchr(src_cur_loc, *STRING_SEPARATOR.ptr, src_end - src_cur_loc) + STRING_SEPARATOR.len;
             src_bucket_val = FnvHash(src_cur_loc, (src_next_loc - STRING_SEPARATOR.len) - src_cur_loc, FNV64_SEED) % BUCKET_COUNT;
           } else {
             src_next_loc = src_end;
@@ -462,7 +464,7 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
         while (src_next_bucket_val == src_bucket_val && src_next_loc < src_end) {
           src_cur_loc = src_next_loc;
           if (src_cur_loc < src_end) {
-            src_next_loc = (uint8_t*)memchr(src_cur_loc, *STRING_SEPARATOR.ptr, src_cur_loc - src_end) + STRING_SEPARATOR.len;
+            src_next_loc = (uint8_t*)memchr(src_cur_loc, *STRING_SEPARATOR.ptr, src_end - src_cur_loc) + STRING_SEPARATOR.len;
             src_next_bucket_val = FnvHash(src_cur_loc, (src_next_loc - STRING_SEPARATOR.len) - src_cur_loc, FNV64_SEED) % BUCKET_COUNT;
           } 
         }
@@ -564,6 +566,7 @@ void DistHashSetMerge(FunctionContext* context, const StringVal& src, StringVal*
 
 
 StringVal DistHashSetFinalize(FunctionContext* context, const StringVal& strvaldhs) {
+  context->AddWarning("Finalize");
   assert(!strvaldhs.is_null);
   int unique_count = 0;
   StringVal result;
