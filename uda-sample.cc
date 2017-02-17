@@ -186,7 +186,7 @@ const StringVal DistHashSetSerialize(FunctionContext* context, const StringVal& 
   
   if (strvaldhs.ptr[0] == MAGIC_BYTE_DELIMSTR) {
     //intermediate type is delimited string
-    context->AddWarning("Spilling may have happened, not guarunteed to be safe for this function (DistributedHashSet).");
+    context->AddWarning("Spilling may have happened, not guarunteed to be safe for this function (DistributedHashSet::DistHashSetSerialize).");
 
     temp.ptr = strvaldhs.ptr;
     temp.len = strvaldhs.len;
